@@ -1268,21 +1268,57 @@ class MainWindow(QMainWindow):
         )
         self._ai_dock.set_context(ctx)
 
-    def _on_ai_apply_moves(self, ops: list) -> None:
-        """Handle AI-suggested MOVE operations after user confirmation."""
-        if not ops:
+    def _on_ai_apply_moves(self, ai_ops: list) -> None:
+        """Handle AI-suggested MOVE operations — resolve senders to UIDs."""
+        if not ai_ops:
             return
-        if not self._current_account:
+        if not self._current_account or not self._current_account.id:
             QMessageBox.warning(self, "No Account", "No account selected.")
             return
 
+        # Build folder name → id map
+        folders = self._folder_repo.get_by_account(self._current_account.id)
+        name_to_id = {f.name: f.id for f in folders if f.id is not None}
+
+        # Resolve each AI suggestion (sender + src_folder) to concrete MoveOps
+        from mailsweep.workers.move_worker import MoveOp
+
+        ops: list[MoveOp] = []
+        summary_lines: list[str] = []
+        for ai_op in ai_ops:
+            src_id = name_to_id.get(ai_op.src_folder)
+            if src_id is None:
+                summary_lines.append(f"  SKIP: folder \"{ai_op.src_folder}\" not found")
+                continue
+            if ai_op.dst_folder not in name_to_id:
+                summary_lines.append(f"  SKIP: destination \"{ai_op.dst_folder}\" not found")
+                continue
+            messages = self._msg_repo.query_messages(
+                folder_ids=[src_id], from_filter=ai_op.sender,
+            )
+            if not messages:
+                summary_lines.append(
+                    f"  SKIP: no messages from \"{ai_op.sender}\" in \"{ai_op.src_folder}\""
+                )
+                continue
+            for m in messages:
+                ops.append(MoveOp(uid=m.uid, src_folder=ai_op.src_folder, dst_folder=ai_op.dst_folder))
+            summary_lines.append(
+                f"  {len(messages)} msg(s) from {ai_op.sender}: "
+                f"{ai_op.src_folder} -> {ai_op.dst_folder} ({ai_op.reason})"
+            )
+
+        if not ops:
+            QMessageBox.information(
+                self, "No Matches",
+                "No messages matched the AI suggestions:\n" + "\n".join(summary_lines),
+            )
+            return
+
         # Build summary for confirmation dialog
-        lines = [f"The AI suggests moving {len(ops)} message(s):\n"]
-        for op in ops[:20]:
-            lines.append(f"  UID {op.uid}: {op.src_folder} -> {op.dst_folder}")
-        if len(ops) > 20:
-            lines.append(f"  ... and {len(ops) - 20} more")
-        lines.append("\nProceed with these moves?")
+        lines = [f"The AI suggestions resolve to {len(ops)} message(s):\n"]
+        lines.extend(summary_lines)
+        lines.append(f"\nProceed with moving {len(ops)} message(s)?")
 
         reply = QMessageBox.question(
             self, "Apply AI Suggestions",

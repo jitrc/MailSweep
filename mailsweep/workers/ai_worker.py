@@ -18,14 +18,16 @@ email organization and suggest improvements.
 
 When you suggest moving emails between folders, output structured MOVE lines:
 ```
-MOVE: uid=12345, from="INBOX", to="IMP/Banks", reason="Axis Bank alert"
+MOVE: sender="user@example.com", from="INBOX", to="IMP/Banks", reason="Bank alerts"
 ```
 
 Rules for MOVE suggestions:
 - Only suggest moves when the user asks for reorganization suggestions
-- Each MOVE line must have uid, from, to, and reason fields
+- Each MOVE line must have sender, from, to, and reason fields
+- The "sender" must be an exact email address from the mailbox data provided
 - The "from" and "to" must be exact IMAP folder names from the data
 - Give a clear, short reason for each move
+- One MOVE line per sender+folder combination (all messages from that sender in that folder will be moved)
 
 {context}
 """

@@ -17,14 +17,24 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from typing import NamedTuple
+
 from mailsweep.ai.providers import PROVIDER_PRESETS
-from mailsweep.workers.move_worker import MoveOp
 
 logger = logging.getLogger(__name__)
 
+
+class AiMoveOp(NamedTuple):
+    """Unresolved AI move suggestion (sender-based, not UID-based)."""
+    sender: str
+    src_folder: str
+    dst_folder: str
+    reason: str
+
+
 # Regex to parse MOVE: lines from AI responses
 _MOVE_RE = re.compile(
-    r'MOVE:\s*uid=(\d+)\s*,\s*from="([^"]+)"\s*,\s*to="([^"]+)"\s*,\s*reason="([^"]*)"',
+    r'MOVE:\s*sender="([^"]+)"\s*,\s*from="([^"]+)"\s*,\s*to="([^"]+)"\s*,\s*reason="([^"]*)"',
     re.IGNORECASE,
 )
 
@@ -32,8 +42,8 @@ _MOVE_RE = re.compile(
 class AiDockWidget(QDockWidget):
     """Dockable AI chat panel for mailbox analysis."""
 
-    # Emitted when user clicks "Apply Suggestions" with parsed move ops
-    apply_moves = pyqtSignal(list)  # list[MoveOp]
+    # Emitted when user clicks "Apply Suggestions" with parsed AI move ops
+    apply_moves = pyqtSignal(list)  # list[AiMoveOp]
     # Request context from main window
     context_requested = pyqtSignal()
 
@@ -250,7 +260,7 @@ class AiDockWidget(QDockWidget):
         moves = _MOVE_RE.findall(self._last_response)
         if not moves:
             return
-        ops = [MoveOp(uid=int(m[0]), src_folder=m[1], dst_folder=m[2]) for m in moves]
+        ops = [AiMoveOp(sender=m[0], src_folder=m[1], dst_folder=m[2], reason=m[3]) for m in moves]
         self.apply_moves.emit(ops)
 
     def _append_chat(self, role: str, text: str) -> None:
