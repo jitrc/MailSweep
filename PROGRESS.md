@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-25
-**Status:** All 6 phases implemented + extensive post-phase enhancements + full code review complete. App running. ~4,800 lines of Python. 56/56 tests passing. Published on GitHub. Release v0.2.0.
+**Status:** All 6 phases + AI-powered analysis & reorganization implemented. App running. ~6,200 lines of Python. 74/74 tests passing. Published on GitHub. Release v0.2.0.
 
 ---
 
@@ -30,13 +30,18 @@ mailsweep/                         ← project root
 │   ├── imap/
 │   │   ├── connection.py          ← connect(), find_trash_folder(), list_folders()
 │   │   └── oauth2.py              ← Gmail XOAUTH2, Outlook MSAL, token refresh
+│   ├── ai/
+│   │   ├── providers.py           ← LLM abstraction: OpenAI-compat + Anthropic (stdlib HTTP)
+│   │   └── context.py             ← DB→markdown context builder for LLM
 │   ├── workers/
 │   │   ├── scan_worker.py         ← FETCH ENVELOPE+SIZE+BODYSTRUCTURE, batched
 │   │   ├── qt_scan_worker.py      ← QObject wrapper (moveToThread), incremental
 │   │   ├── detach_worker.py       ← FETCH→strip→APPEND→DELETE→EXPUNGE
 │   │   ├── backup_worker.py       ← RFC822→.eml→DELETE→EXPUNGE
 │   │   ├── delete_worker.py       ← Gmail-safe delete on background thread
-│   │   └── incremental_scan.py    ← get_new_deleted_uids(), CONDSTORE check
+│   │   ├── incremental_scan.py    ← get_new_deleted_uids(), CONDSTORE check
+│   │   ├── ai_worker.py           ← background LLM chat (moveToThread)
+│   │   └── move_worker.py         ← IMAP MOVE (RFC 6851) with copy+delete fallback
 │   └── ui/
 │       ├── main_window.py         ← QMainWindow, splitter layout, all wiring
 │       ├── account_dialog.py      ← add/edit account, OAuth2 on background thread
@@ -45,12 +50,14 @@ mailsweep/                         ← project root
 │       ├── filter_bar.py          ← sender/subject/date/size/attachment filters
 │       ├── treemap_widget.py      ← squarify + QPainter, hover, click-to-filter
 │       ├── progress_panel.py      ← QProgressBar + status + Cancel
-│       ├── settings_dialog.py     ← batch size, max rows, save dir
-│       └── log_dock.py            ← live log viewer, per-level colour, dockable
+│       ├── settings_dialog.py     ← batch size, max rows, save dir, AI settings
+│       ├── log_dock.py            ← live log viewer, per-level colour, dockable
+│       └── ai_dock.py             ← AI chat dock: provider selector, chat history, apply moves
 └── tests/
     ├── test_db.py                 ← 22 tests: CRUD, queries, stats, message_id matching
     ├── test_scan_worker.py        ← 17 tests: mock IMAP, BODYSTRUCTURE parser, message_id
-    └── test_mime_utils.py         ← 11 tests: strip, save, path traversal
+    ├── test_mime_utils.py         ← 11 tests: strip, save, path traversal
+    └── test_ai.py                 ← 18 tests: LLM providers, context builder, AI queries
 ```
 
 ---
@@ -65,6 +72,7 @@ mailsweep/                         ← project root
 | 4 | Detach attachments + backup-delete | ✅ done |
 | 5 | Gmail + Outlook OAuth2 | ✅ done |
 | 6 | Incremental scan, settings, log dock, packaging spec | ✅ done |
+| 7 | AI-powered email analysis & reorganization | ✅ done |
 
 ---
 
@@ -103,6 +111,19 @@ Gmail's IMAP maps `\Deleted`+`EXPUNGE` on `[Gmail]/All Mail` to permanent deleti
 Fix: `COPY` UIDs to `[Gmail]/Trash` before `\Deleted`+`EXPUNGE`. Applied to inline delete and backup worker.
 Detach worker doesn't need this — it APPENDs a replacement message, so the old one should be removed.
 `find_trash_folder()` in `connection.py` detects Trash across providers (Gmail, Outlook, Apple Mail, generic).
+
+### AI-Powered Analysis (Phase 7)
+LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
+- **Providers:** OpenAI-compatible (Ollama, OpenAI, Groq, Together) + Anthropic native API
+- **Context builder:** Reads SQLite DB → markdown summary (folder tree with stats, top senders per folder,
+  cross-folder sender overlap, dead folder detection). Capped at ~8K tokens.
+- **AI dock:** `QDockWidget` with chat history, provider/model selector, quick-action buttons
+  ("Analyze folders", "Find misfilings", "Find duplicates"), and "Apply Suggestions" for MOVE operations
+- **Move worker:** IMAP MOVE (RFC 6851) with `COPY`+`DELETE`+`EXPUNGE` fallback, batched by source folder,
+  updates local DB cache after each move
+- **Threading:** `AiWorker` uses `@pyqtSlot` + `moveToThread` pattern (params via constructor, not lambda)
+  to keep UI responsive during LLM calls
+- **Settings:** Provider/URL/model persisted in `settings.json`; API key stored in system keyring
 
 ---
 
@@ -160,6 +181,11 @@ Detach worker doesn't need this — it APPENDs a replacement message, so the old
 | **Sender email dedup** | Sender treemap/summary groups by extracted email, not full "Name \<email\>" string |
 | **Message-ID matching** | `message_id` from ENVELOPE used for cross-folder dedup, unlabelled detection, and "View Headers → Labels" |
 | **Force Full Rescan** | Actions menu option to re-fetch all message metadata, bypassing incremental cache |
+| **AI Assistant** | LLM chat dock for mailbox analysis — Ollama/OpenAI/Anthropic, zero new deps (stdlib HTTP) |
+| **AI folder analysis** | Context builder: folder tree, top senders, cross-folder overlap, dead folder detection |
+| **AI move suggestions** | LLM outputs `MOVE:` lines → user confirms → IMAP move worker executes |
+| **IMAP move worker** | RFC 6851 MOVE with copy+delete fallback, batched by source folder, DB cache update |
+| **AI settings** | Provider/URL/model in settings dialog + keyring for API key |
 
 ---
 
@@ -240,6 +266,10 @@ Outlook token refresh fix, README/LICENSE/.gitignore added, pyproject.toml metad
 ## Git Log
 
 ```
+5f8a4d0  feat: add AI-powered email analysis and reorganization
+2b552f4  feat: add AppImage build to release workflow
+994e9fa  fix: build Linux binary on ubuntu-22.04 for GLIBC 2.35 compat
+0b9d67d  chore: bump version to 0.2.0, update PROGRESS.md for release
 52a2a44  refactor: remove schema migrations, inline all columns and indexes
 8fbdba4  feat: add Force Full Rescan option in Actions menu
 2817424  feat: add message_id for cross-folder matching, fix unlabelled detection

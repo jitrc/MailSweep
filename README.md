@@ -21,6 +21,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Incremental scan** — rescan only fetches new/changed messages using UIDVALIDITY
 - **OAuth2 support** — Gmail (XOAUTH2) and Outlook (MSAL), plus password/app-password auth
 - **Filter bar** — filter by sender, subject, date range, size range, attachment presence
+- **AI assistant** — LLM-powered mailbox analysis (Ollama, OpenAI, Anthropic) — find misfilings, dead folders, sender overlap; apply AI-suggested IMAP moves with one click
 
 ## Installation
 
@@ -79,6 +80,7 @@ APIs & Services > Credentials > OAuth 2.0 Client ID (Desktop app type).
 | **Backup** | No | Download full message as .eml file |
 | **Backup & Delete** | Yes | Download .eml then move message to Trash |
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
+| **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
 ## Data Locations
 
@@ -118,6 +120,10 @@ uv run mypy mailsweep/
   deletion on Gmail where `\Deleted` + `EXPUNGE` on `[Gmail]/All Mail` bypasses Trash entirely.
 - **Credentials** are stored in the system keychain via the `keyring` library (Secret Service on
   Linux, Keychain on macOS, Credential Manager on Windows). Never stored in files or logged.
+- **AI assistant** uses stdlib `urllib.request` to call LLM APIs (zero new dependencies). Builds a
+  markdown context from the SQLite cache (folder tree, top senders, cross-folder overlap, dead folders)
+  and sends it as system prompt. Supports Ollama (local), OpenAI, and Anthropic. IMAP moves use
+  RFC 6851 `MOVE` with `COPY`+`DELETE`+`EXPUNGE` fallback.
 
 ## License
 
