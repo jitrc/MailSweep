@@ -8,6 +8,26 @@ bulk attachment extraction, detach, backup, and delete operations.
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
+## Screenshots
+
+### Treemap Views
+
+| Folders | Senders | Messages |
+|---------|---------|----------|
+| ![Folders](images/Viz_folders.png) | ![Senders](images/viz_senders.png) | ![Messages](images/viz_messages.png) |
+
+### Unlabelled Messages
+
+| By Sender | By Message |
+|-----------|------------|
+| ![Unlabelled Senders](images/unlabellled_senders.png) | ![Unlabelled Messages](images/unlabellled_messages.png) |
+
+### AI Assistant & Settings
+
+| AI Suggestions | Account Settings | Settings |
+|----------------|------------------|----------|
+| ![AI Suggestions](images/AI_Suggestions.png) | ![Account Settings](images/account_settings.png) | ![Settings](images/settings.png) |
+
 ## Features
 
 - **Treemap visualization** — see which folders, senders, or messages consume the most space
