@@ -83,9 +83,13 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        self._scan_btn = QPushButton("Scan Mailbox")
+        self._scan_btn = QPushButton("Scan All")
         self._scan_btn.clicked.connect(self._on_scan)
         tb.addWidget(self._scan_btn)
+
+        self._scan_selected_btn = QPushButton("Scan Selected Folder")
+        self._scan_selected_btn.clicked.connect(self._on_scan_selected)
+        tb.addWidget(self._scan_selected_btn)
 
         self._detach_btn = QPushButton("Detach Attachments…")
         self._detach_btn.clicked.connect(self._on_detach)
@@ -162,7 +166,9 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Show Log", self._show_log_dock)
 
         actions_menu = menubar.addMenu("&Actions")
-        actions_menu.addAction("Scan Mailbox", self._on_scan)
+        actions_menu.addAction("Scan All Folders", self._on_scan)
+        actions_menu.addAction("Scan Selected Folder", self._on_scan_selected)
+        actions_menu.addSeparator()
         actions_menu.addAction("Detach Attachments…", self._on_detach)
         actions_menu.addAction("Backup && Delete…", self._on_backup_delete)
         actions_menu.addAction("Delete Selected…", self._on_delete)
@@ -185,9 +191,28 @@ class MainWindow(QMainWindow):
         acc = self._account_combo.itemData(idx)
         if isinstance(acc, Account):
             self._current_account = acc
+            self._fetch_folder_list()
             self._refresh_folder_panel()
             self._refresh_treemap()
             self._reload_messages()
+
+    def _fetch_folder_list(self) -> None:
+        """Connect to the server and pull the folder list into the DB (no message fetch)."""
+        if not self._current_account or not self._current_account.id:
+            return
+        from mailsweep.imap.connection import IMAPConnectionError, connect, list_folders
+        try:
+            client = connect(self._current_account)
+            folder_names = list_folders(client)
+            client.logout()
+        except IMAPConnectionError as exc:
+            logger.warning("Could not fetch folder list: %s", exc)
+            return
+
+        for name in folder_names:
+            if not self._folder_repo.get_by_name(self._current_account.id, name):
+                f = Folder(account_id=self._current_account.id, name=name)
+                self._folder_repo.upsert(f)
 
     def _on_add_account(self) -> None:
         dlg = AccountDialog(self)
@@ -195,7 +220,6 @@ class MainWindow(QMainWindow):
             account = dlg.get_account()
             saved = self._account_repo.upsert(account)
             self._load_accounts()
-            # Select new account
             for i in range(self._account_combo.count()):
                 a = self._account_combo.itemData(i)
                 if isinstance(a, Account) and a.id == saved.id:
@@ -289,6 +313,7 @@ class MainWindow(QMainWindow):
     # ── Scan ──────────────────────────────────────────────────────────────────
 
     def _on_scan(self) -> None:
+        """Scan ALL folders on the server."""
         if not self._current_account:
             QMessageBox.information(self, "No Account", "Please add an account first.")
             return
@@ -297,7 +322,6 @@ class MainWindow(QMainWindow):
             return
         assert self._current_account.id is not None
 
-        # Get or create folder records
         from mailsweep.imap.connection import IMAPConnectionError, connect, list_folders
         self._progress_panel.set_running("Connecting…")
         self._scan_btn.setEnabled(False)
@@ -320,6 +344,41 @@ class MainWindow(QMainWindow):
             folders.append(f)
 
         self._refresh_folder_panel()
+        self._start_scan(folders)
+
+    def _on_scan_selected(self) -> None:
+        """Scan only the folder(s) currently selected in the folder panel."""
+        if not self._current_account:
+            QMessageBox.information(self, "No Account", "Please add an account first.")
+            return
+        if not self._current_folder_ids:
+            QMessageBox.information(
+                self, "No Folder Selected",
+                "Click a folder in the tree first, then click Scan Selected Folder.",
+            )
+            return
+        if self._scan_thread and self._scan_thread.isRunning():
+            QMessageBox.information(self, "Busy", "A scan is already in progress.")
+            return
+        assert self._current_account.id is not None
+
+        folders: list[Folder] = []
+        for fid in self._current_folder_ids:
+            f = self._folder_repo.get_by_id(fid)
+            if f:
+                folders.append(f)
+
+        if not folders:
+            QMessageBox.information(self, "No Folder", "Selected folder not found in database.")
+            return
+
+        self._start_scan(folders)
+
+    def _start_scan(self, folders: list[Folder]) -> None:
+        """Common scan launcher used by both Scan All and Scan Selected."""
+        assert self._current_account is not None
+        self._scan_btn.setEnabled(False)
+        self._scan_selected_btn.setEnabled(False)
 
         worker = QtScanWorker(
             account=self._current_account,
@@ -361,6 +420,7 @@ class MainWindow(QMainWindow):
     def _on_scan_all_done(self) -> None:
         self._progress_panel.set_done("Scan complete")
         self._scan_btn.setEnabled(True)
+        self._scan_selected_btn.setEnabled(True)
         self._scan_worker = None
         self._scan_thread = None
         self._reload_messages()
