@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-25
-**Status:** All 7 phases implemented. App running. ~6,400 lines of Python. 85/85 tests passing. Published on GitHub. Version 0.3.2.
+**Status:** All 7 phases implemented. App running. ~6,500 lines of Python. 85/85 tests passing. Published on GitHub. Version 0.4.0.
 
 ---
 
@@ -199,6 +199,8 @@ LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
 | **App icon** | SVG icon (envelope + treemap blocks + sparkles); set on QApplication, bundled in PyInstaller spec |
 | **Screenshots in README** | 8 screenshots added: treemap views, unlabelled, AI suggestions, account settings, settings |
 | **Author metadata** | Author name in pyproject.toml, README, and About dialog |
+| **Remove Label** | Expunge messages from specific folders without Trash copy; for cleaning up duplicate labels |
+| **Label picker dialog** | Remove Label shows all folders a message appears in with checkboxes; user picks which to remove |
 
 ---
 
@@ -279,6 +281,9 @@ Outlook token refresh fix, README/LICENSE/.gitignore added, pyproject.toml metad
 ## Git Log
 
 ```
+ad6d4f2  feat: label picker dialog for Remove Label action
+8321780  feat: add Remove Label action for duplicate labels cleanup
+8c674f2  chore: bump version to 0.3.2, update PROGRESS.md
 9fc48cb  feat: add app icon (envelope with treemap blocks and sparkles)
 7f410b1  docs: add screenshots to README
 d8d9ee1  docs: add author to pyproject.toml
