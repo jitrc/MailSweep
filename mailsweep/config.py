@@ -38,6 +38,8 @@ TREEMAP_MIN_SIZE_BYTES: int = 1024  # Don't draw tiles smaller than 1 KB
 
 # ── AI ───────────────────────────────────────────────────────────────────────
 
+UNLABELLED_MODE: str = "no_thread"       # no_thread | in_reply_to | gmail_thread
+
 AI_PROVIDER: str = "ollama"              # ollama | openai | anthropic | custom
 AI_BASE_URL: str = "http://localhost:11434/v1"
 AI_API_KEY: str = ""
@@ -52,6 +54,7 @@ def save_settings() -> None:
         "scan_batch_size": SCAN_BATCH_SIZE,
         "message_table_max_rows": MESSAGE_TABLE_MAX_ROWS,
         "default_save_dir": str(DEFAULT_SAVE_DIR),
+        "unlabelled_mode": UNLABELLED_MODE,
         "ai_provider": AI_PROVIDER,
         "ai_base_url": AI_BASE_URL,
         "ai_model": AI_MODEL,
@@ -74,6 +77,7 @@ def save_settings() -> None:
 def load_settings() -> None:
     """Load persisted settings from disk, falling back to defaults."""
     global SCAN_BATCH_SIZE, MESSAGE_TABLE_MAX_ROWS, DEFAULT_SAVE_DIR
+    global UNLABELLED_MODE
     global AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL
     if not SETTINGS_PATH.exists():
         return
@@ -85,6 +89,9 @@ def load_settings() -> None:
         if saved_dir:
             DEFAULT_SAVE_DIR = Path(saved_dir)
             DEFAULT_SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        saved_mode = data.get("unlabelled_mode", UNLABELLED_MODE)
+        if saved_mode in ("no_thread", "in_reply_to", "gmail_thread"):
+            UNLABELLED_MODE = saved_mode
         AI_PROVIDER = data.get("ai_provider", AI_PROVIDER)
         AI_BASE_URL = data.get("ai_base_url", AI_BASE_URL)
         AI_MODEL = data.get("ai_model", AI_MODEL)

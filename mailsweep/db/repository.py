@@ -188,11 +188,14 @@ class MessageRepository:
             self._conn.executemany(
                 """
                 INSERT INTO messages
-                    (uid, folder_id, message_id, from_addr, to_addr, subject, date,
+                    (uid, folder_id, message_id, in_reply_to, thread_id,
+                     from_addr, to_addr, subject, date,
                      size_bytes, has_attachment, attachment_names, flags, cached_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(uid, folder_id) DO UPDATE SET
                     message_id       = excluded.message_id,
+                    in_reply_to      = excluded.in_reply_to,
+                    thread_id        = excluded.thread_id,
                     from_addr        = excluded.from_addr,
                     to_addr          = excluded.to_addr,
                     subject          = excluded.subject,
@@ -206,6 +209,7 @@ class MessageRepository:
                 [
                     (
                         m.uid, m.folder_id, m.message_id,
+                        m.in_reply_to, m.thread_id,
                         m.from_addr, m.to_addr, m.subject,
                         m.date.isoformat() if m.date else None,
                         m.size_bytes, int(m.has_attachment),
@@ -447,14 +451,88 @@ class MessageRepository:
         )
         return fragment, list(other_folder_ids) + list(other_folder_ids)
 
+    def _unlabelled_not_exists_thread(self, other_folder_ids: list[int]) -> tuple[str, list[Any]]:
+        """Return (SQL fragment, params) for In-Reply-To chain mode.
+
+        A message is NOT unlabelled if any message in a labelled folder is:
+        - its parent (other.message_id = m.in_reply_to)
+        - its child (other.in_reply_to = m.message_id)
+        - itself (same message_id)
+        Falls back to identity-tuple for messages without message_id.
+        """
+        placeholders = ",".join("?" * len(other_folder_ids))
+        ids = list(other_folder_ids)
+        fragment = (
+            "("
+            # Messages WITH message_id: match by message_id or reply chain
+            "  (m.message_id != '' AND NOT EXISTS ("
+            "    SELECT 1 FROM messages o"
+            f"    WHERE o.folder_id IN ({placeholders})"
+            "      AND ("
+            "        o.message_id = m.message_id"
+            "        OR (m.in_reply_to != '' AND o.message_id = m.in_reply_to)"
+            "        OR (o.in_reply_to != '' AND o.in_reply_to = m.message_id)"
+            "      )"
+            "  ))"
+            "  OR"
+            # Messages WITHOUT message_id: fall back to identity tuple
+            "  (m.message_id = '' AND NOT EXISTS ("
+            "    SELECT 1 FROM messages o"
+            f"    WHERE o.folder_id IN ({placeholders})"
+            "      AND o.from_addr IS m.from_addr"
+            "      AND o.subject   IS m.subject"
+            "      AND o.date      IS m.date"
+            "      AND o.size_bytes = m.size_bytes"
+            "  ))"
+            ")"
+        )
+        return fragment, ids + ids
+
+    def _unlabelled_not_exists_gmail_thread(self, other_folder_ids: list[int]) -> tuple[str, list[Any]]:
+        """Return (SQL fragment, params) for Gmail Thread ID mode.
+
+        Messages with thread_id != 0: unlabelled if NO message with the same
+        thread_id exists in a labelled folder.
+        Messages with thread_id == 0: fall back to message_id / identity-tuple.
+        """
+        placeholders = ",".join("?" * len(other_folder_ids))
+        ids = list(other_folder_ids)
+        # Build the fallback (no_thread) fragment for thread_id=0 messages
+        fallback_fragment, fallback_params = self._unlabelled_not_exists(other_folder_ids)
+        fragment = (
+            "("
+            # Messages WITH thread_id: match by thread_id
+            "  (m.thread_id != 0 AND NOT EXISTS ("
+            "    SELECT 1 FROM messages o"
+            f"    WHERE o.folder_id IN ({placeholders})"
+            "      AND o.thread_id = m.thread_id"
+            "  ))"
+            "  OR"
+            # Messages WITHOUT thread_id: fall back to no_thread logic
+            f"  (m.thread_id = 0 AND {fallback_fragment})"
+            ")"
+        )
+        return fragment, ids + fallback_params
+
+    def _get_unlabelled_not_exists(self, other_folder_ids: list[int], mode: str = "no_thread") -> tuple[str, list[Any]]:
+        """Dispatch to the appropriate NOT EXISTS builder based on mode."""
+        if mode == "in_reply_to":
+            return self._unlabelled_not_exists_thread(other_folder_ids)
+        elif mode == "gmail_thread":
+            return self._unlabelled_not_exists_gmail_thread(other_folder_ids)
+        else:
+            return self._unlabelled_not_exists(other_folder_ids)
+
     def get_unlabelled_stats(
         self,
         all_mail_folder_id: int,
         other_folder_ids: list[int],
+        mode: str = "no_thread",
     ) -> tuple[int, int]:
         """Return (count, total_size) of messages only in All Mail (no labels).
 
         If other_folder_ids is empty, all All Mail messages are "unlabelled".
+        mode: "no_thread" | "in_reply_to" | "gmail_thread"
         """
         if not other_folder_ids:
             row = self._conn.execute(
@@ -464,7 +542,7 @@ class MessageRepository:
             ).fetchone()
             return (row[0], row[1]) if row else (0, 0)
 
-        not_exists, ne_params = self._unlabelled_not_exists(other_folder_ids)
+        not_exists, ne_params = self._get_unlabelled_not_exists(other_folder_ids, mode)
         sql = (
             "SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) "
             f"FROM messages m WHERE m.folder_id = ? AND {not_exists}"
@@ -486,13 +564,17 @@ class MessageRepository:
         has_attachment: bool | None = None,
         order_by: str = "size_bytes DESC",
         limit: int = 5000,
+        mode: str = "no_thread",
     ) -> list[Message]:
-        """Query messages that exist only in All Mail (no other labels)."""
+        """Query messages that exist only in All Mail (no other labels).
+
+        mode: "no_thread" | "in_reply_to" | "gmail_thread"
+        """
         clauses: list[str] = ["m.folder_id = ?"]
         params: list[Any] = [all_mail_folder_id]
 
         if other_folder_ids:
-            not_exists, ne_params = self._unlabelled_not_exists(other_folder_ids)
+            not_exists, ne_params = self._get_unlabelled_not_exists(other_folder_ids, mode)
             clauses.append(not_exists)
             params.extend(ne_params)
 
@@ -619,10 +701,12 @@ class MessageRepository:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_folders_for_message(self, msg: Message) -> list[str]:
+    def get_folders_for_message(self, msg: Message, include_thread: bool = False) -> list[str]:
         """Return all folder names containing the same physical message.
 
         Uses message_id for matching when available; falls back to identity tuple.
+        If include_thread is True and thread_id is set, also include folders
+        from thread-mate messages.
         """
         if msg.message_id:
             rows = self._conn.execute(
@@ -654,4 +738,19 @@ class MessageRepository:
                     msg.size_bytes,
                 ),
             ).fetchall()
-        return [r["name"] for r in rows]
+        names = {r["name"] for r in rows}
+
+        if include_thread and msg.thread_id:
+            thread_rows = self._conn.execute(
+                """
+                SELECT DISTINCT f.name
+                FROM messages m
+                JOIN folders f ON f.id = m.folder_id
+                WHERE m.thread_id = ?
+                ORDER BY f.name
+                """,
+                (msg.thread_id,),
+            ).fetchall()
+            names.update(r["name"] for r in thread_rows)
+
+        return sorted(names)

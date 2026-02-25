@@ -56,6 +56,12 @@ class SettingsDialog(QDialog):
         save_row.addWidget(browse_btn)
         form.addRow("Attachment save dir:", save_row)
 
+        self._unlabelled_mode = QComboBox()
+        self._unlabelled_mode.addItem("No thread matching", "no_thread")
+        self._unlabelled_mode.addItem("In-Reply-To chain", "in_reply_to")
+        self._unlabelled_mode.addItem("Gmail Thread ID", "gmail_thread")
+        form.addRow("Unlabelled detection:", self._unlabelled_mode)
+
         general_group.setLayout(form)
         layout.addWidget(general_group)
 
@@ -97,6 +103,10 @@ class SettingsDialog(QDialog):
         self._max_rows.setValue(cfg.MESSAGE_TABLE_MAX_ROWS)
         self._save_dir_edit.setText(str(cfg.DEFAULT_SAVE_DIR))
 
+        mode_idx = self._unlabelled_mode.findData(cfg.UNLABELLED_MODE)
+        if mode_idx >= 0:
+            self._unlabelled_mode.setCurrentIndex(mode_idx)
+
         idx = self._ai_provider.findText(cfg.AI_PROVIDER)
         if idx >= 0:
             self._ai_provider.setCurrentIndex(idx)
@@ -124,6 +134,8 @@ class SettingsDialog(QDialog):
         save_path = Path(self._save_dir_edit.text().strip())
         save_path.mkdir(parents=True, exist_ok=True)
         cfg.DEFAULT_SAVE_DIR = save_path
+
+        cfg.UNLABELLED_MODE = self._unlabelled_mode.currentData()
 
         cfg.AI_PROVIDER = self._ai_provider.currentText()
         cfg.AI_BASE_URL = self._ai_base_url.text().strip()

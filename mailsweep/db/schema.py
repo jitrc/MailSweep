@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS messages (
     uid              INTEGER NOT NULL,
     folder_id        INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
     message_id       TEXT    NOT NULL DEFAULT '',
+    in_reply_to      TEXT    NOT NULL DEFAULT '',
+    thread_id        INTEGER NOT NULL DEFAULT 0,
     from_addr        TEXT,
     to_addr          TEXT,
     subject          TEXT,
@@ -50,8 +52,20 @@ CREATE INDEX IF NOT EXISTS idx_messages_date       ON messages(date);
 CREATE INDEX IF NOT EXISTS idx_messages_attachment ON messages(has_attachment) WHERE has_attachment=1;
 CREATE INDEX IF NOT EXISTS idx_messages_folder     ON messages(folder_id);
 CREATE INDEX IF NOT EXISTS idx_messages_msgid      ON messages(message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_in_reply_to ON messages(in_reply_to);
+CREATE INDEX IF NOT EXISTS idx_messages_thread_id   ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_identity   ON messages(from_addr, subject, date, size_bytes);
 """
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns that may be missing in older databases."""
+    cur = conn.execute("PRAGMA table_info(messages)")
+    existing = {row[1] for row in cur.fetchall()}
+    if "in_reply_to" not in existing:
+        conn.execute("ALTER TABLE messages ADD COLUMN in_reply_to TEXT NOT NULL DEFAULT ''")
+    if "thread_id" not in existing:
+        conn.execute("ALTER TABLE messages ADD COLUMN thread_id INTEGER NOT NULL DEFAULT 0")
 
 
 def init_db(path: str | Path = ":memory:") -> sqlite3.Connection:
@@ -60,6 +74,12 @@ def init_db(path: str | Path = ":memory:") -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # Migrate existing tables before applying full schema
+    try:
+        conn.execute("SELECT 1 FROM messages LIMIT 0")
+        _migrate(conn)
+    except sqlite3.OperationalError:
+        pass  # Table doesn't exist yet — CREATE TABLE will handle it
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     return conn

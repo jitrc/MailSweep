@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 500
 
 # IMAP fetch items
-FETCH_ITEMS = [b"ENVELOPE", b"RFC822.SIZE", b"BODYSTRUCTURE", b"FLAGS"]
+FETCH_ITEMS = [b"ENVELOPE", b"RFC822.SIZE", b"BODYSTRUCTURE", b"FLAGS", b"X-GM-THRID"]
 
 
 class ScanWorker:
@@ -109,6 +109,7 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
             to_addr = _envelope_addr(getattr(envelope, "to", None))
             subject = _decode_header(getattr(envelope, "subject", b""))
             message_id = _b(getattr(envelope, "message_id", b""))
+            in_reply_to = _b(getattr(envelope, "in_reply_to", b""))
             raw_date = getattr(envelope, "date", None)
             # .date is already a datetime in imapclient 3.x
             if isinstance(raw_date, datetime):
@@ -120,7 +121,10 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
             to_addr = ""
             subject = ""
             message_id = ""
+            in_reply_to = ""
             date = None
+
+        thread_id = data.get(b"X-GM-THRID", 0) or 0
 
         has_attachment, attachment_names = _parse_bodystructure(bodystructure)
 
@@ -128,6 +132,8 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
             uid=uid,
             folder_id=folder_id,
             message_id=message_id,
+            in_reply_to=in_reply_to,
+            thread_id=thread_id,
             from_addr=from_addr,
             to_addr=to_addr,
             subject=subject,

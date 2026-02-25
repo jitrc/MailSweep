@@ -310,7 +310,7 @@ class MainWindow(QMainWindow):
         all_mail = self._folder_repo.find_all_mail_folder(self._current_account.id)
         if all_mail and all_mail.id is not None:
             other_ids = [fid for fid in folder_ids if fid != all_mail.id]
-            count, size = self._msg_repo.get_unlabelled_stats(all_mail.id, other_ids)
+            count, size = self._msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode=cfg.UNLABELLED_MODE)
             unlabelled_stats = (count, size)
 
         self._folder_panel.populate(folders, dedup_total=dedup_size, unlabelled_stats=unlabelled_stats)
@@ -398,7 +398,7 @@ class MainWindow(QMainWindow):
         folders = self._folder_repo.get_by_account(self._current_account.id)
         other_ids = [f.id for f in folders if f.id is not None and f.id != all_mail.id]
         return self._msg_repo.query_unlabelled_messages(
-            all_mail.id, other_ids, **filter_kwargs
+            all_mail.id, other_ids, mode=cfg.UNLABELLED_MODE, **filter_kwargs
         )
 
     # ── Treemap ───────────────────────────────────────────────────────────────

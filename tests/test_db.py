@@ -459,3 +459,159 @@ class TestMessageIdMatching:
         results = msg_repo.query_messages(folder_ids=[sample_folder.id])
         assert len(results) == 1
         assert results[0].message_id == mid
+
+    def test_in_reply_to_and_thread_id_persisted(self, msg_repo, sample_folder):
+        """in_reply_to and thread_id are saved and retrievable."""
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=sample_folder.id, message_id="<a@x.com>",
+                    in_reply_to="<parent@x.com>", thread_id=123456789,
+                    from_addr="a@x.com", subject="Test", size_bytes=100),
+        ])
+        results = msg_repo.query_messages(folder_ids=[sample_folder.id])
+        assert len(results) == 1
+        assert results[0].in_reply_to == "<parent@x.com>"
+        assert results[0].thread_id == 123456789
+
+
+class TestThreadAwareUnlabelled:
+    """Tests for thread-aware unlabelled detection modes."""
+
+    @pytest.fixture
+    def gmail_account(self, account_repo):
+        acc = Account(
+            display_name="Gmail",
+            host="imap.gmail.com",
+            port=993,
+            username="thread@gmail.com",
+            auth_type=AuthType.PASSWORD,
+            use_ssl=True,
+        )
+        return account_repo.upsert(acc)
+
+    @pytest.fixture
+    def gmail_folders(self, folder_repo, gmail_account):
+        inbox = folder_repo.upsert(Folder(account_id=gmail_account.id, name="INBOX"))
+        all_mail = folder_repo.upsert(Folder(account_id=gmail_account.id, name="[Gmail]/All Mail"))
+        sent = folder_repo.upsert(Folder(account_id=gmail_account.id, name="[Gmail]/Sent Mail"))
+        return inbox, all_mail, sent
+
+    def test_in_reply_to_chain(self, msg_repo, gmail_folders):
+        """Reply to a labelled message should not be unlabelled in in_reply_to mode."""
+        inbox, all_mail, sent = gmail_folders
+        # Original message in INBOX (labelled)
+        msg_repo.upsert_batch([
+            Message(uid=100, folder_id=inbox.id, message_id="<orig@x.com>",
+                    from_addr="alice@x.com", subject="Hello",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=1000),
+        ])
+        # Reply only in All Mail (would be unlabelled without thread matching)
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id="<reply@x.com>",
+                    in_reply_to="<orig@x.com>",
+                    from_addr="bob@x.com", subject="Re: Hello",
+                    date=datetime(2025, 1, 2, tzinfo=timezone.utc), size_bytes=2000),
+        ])
+        other_ids = [inbox.id, sent.id]
+        # in_reply_to mode: reply's parent is in INBOX → not unlabelled
+        count, size = msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode="in_reply_to")
+        assert count == 0
+        assert size == 0
+        messages = msg_repo.query_unlabelled_messages(all_mail.id, other_ids, mode="in_reply_to")
+        assert len(messages) == 0
+
+    def test_no_thread_mode_ignores_chain(self, msg_repo, gmail_folders):
+        """In no_thread mode, reply chain is ignored — reply IS unlabelled."""
+        inbox, all_mail, sent = gmail_folders
+        msg_repo.upsert_batch([
+            Message(uid=100, folder_id=inbox.id, message_id="<orig@x.com>",
+                    from_addr="alice@x.com", subject="Hello",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=1000),
+        ])
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id="<reply@x.com>",
+                    in_reply_to="<orig@x.com>",
+                    from_addr="bob@x.com", subject="Re: Hello",
+                    date=datetime(2025, 1, 2, tzinfo=timezone.utc), size_bytes=2000),
+        ])
+        other_ids = [inbox.id, sent.id]
+        # no_thread mode: reply has no direct match in labelled folders
+        count, _ = msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode="no_thread")
+        assert count == 1
+
+    def test_gmail_thread_id(self, msg_repo, gmail_folders):
+        """Same thread_id as a labelled message → not unlabelled in gmail_thread mode."""
+        inbox, all_mail, sent = gmail_folders
+        tid = 1234567890
+        # Original in INBOX with thread_id
+        msg_repo.upsert_batch([
+            Message(uid=100, folder_id=inbox.id, message_id="<orig@x.com>",
+                    thread_id=tid,
+                    from_addr="alice@x.com", subject="Thread",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=1000),
+        ])
+        # Reply only in All Mail, same thread_id
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id="<reply@x.com>",
+                    thread_id=tid,
+                    from_addr="bob@x.com", subject="Re: Thread",
+                    date=datetime(2025, 1, 2, tzinfo=timezone.utc), size_bytes=2000),
+        ])
+        other_ids = [inbox.id, sent.id]
+        count, size = msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode="gmail_thread")
+        assert count == 0
+        assert size == 0
+        messages = msg_repo.query_unlabelled_messages(all_mail.id, other_ids, mode="gmail_thread")
+        assert len(messages) == 0
+
+    def test_thread_id_zero_falls_back(self, msg_repo, gmail_folders):
+        """thread_id=0 falls back to message_id matching in gmail_thread mode."""
+        inbox, all_mail, sent = gmail_folders
+        mid = "<fallback@x.com>"
+        # Message in both INBOX and All Mail with same message_id, thread_id=0
+        msg_repo.upsert_batch([
+            Message(uid=100, folder_id=inbox.id, message_id=mid,
+                    thread_id=0,
+                    from_addr="a@x.com", subject="No thread",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=500),
+            Message(uid=1, folder_id=all_mail.id, message_id=mid,
+                    thread_id=0,
+                    from_addr="a@x.com", subject="No thread",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=500),
+        ])
+        other_ids = [inbox.id, sent.id]
+        count, _ = msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode="gmail_thread")
+        assert count == 0, "thread_id=0 should fall back to message_id matching"
+
+    def test_thread_id_no_match(self, msg_repo, gmail_folders):
+        """Message with thread_id not in any labelled folder IS unlabelled."""
+        inbox, all_mail, sent = gmail_folders
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id="<lone@x.com>",
+                    thread_id=999999,
+                    from_addr="lone@x.com", subject="Lone",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=3000),
+        ])
+        other_ids = [inbox.id, sent.id]
+        count, size = msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode="gmail_thread")
+        assert count == 1
+        assert size == 3000
+
+    def test_in_reply_to_reverse_direction(self, msg_repo, gmail_folders):
+        """A labelled child referencing the All Mail message should clear unlabelled."""
+        inbox, all_mail, sent = gmail_folders
+        # Parent only in All Mail
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id="<parent@x.com>",
+                    from_addr="a@x.com", subject="Original",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=1000),
+        ])
+        # Child in INBOX references parent
+        msg_repo.upsert_batch([
+            Message(uid=100, folder_id=inbox.id, message_id="<child@x.com>",
+                    in_reply_to="<parent@x.com>",
+                    from_addr="b@x.com", subject="Re: Original",
+                    date=datetime(2025, 1, 2, tzinfo=timezone.utc), size_bytes=500),
+        ])
+        other_ids = [inbox.id, sent.id]
+        count, _ = msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode="in_reply_to")
+        assert count == 0, "parent should not be unlabelled when child is labelled"

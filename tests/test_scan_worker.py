@@ -272,3 +272,87 @@ class TestEnvelopeAddr:
     def test_empty(self):
         assert _envelope_addr(None) == ""
         assert _envelope_addr([]) == ""
+
+
+class TestInReplyToParsing:
+    def test_in_reply_to_parsed_from_envelope(self):
+        """ScanWorker extracts in_reply_to from ENVELOPE."""
+        envelope = _MockEnvelope(
+            date=None,
+            subject=b"Re: Test",
+            from_=(_MockAddress(b"Bob", None, b"bob", b"example.com"),),
+            in_reply_to=b"<original@example.com>",
+            message_id=b"<reply@example.com>",
+        )
+        uid_map = {
+            1: {
+                b"ENVELOPE": envelope,
+                b"RFC822.SIZE": 1024,
+                b"BODYSTRUCTURE": (b"text", b"plain", [], None, None, b"7bit", 100),
+                b"FLAGS": [],
+            },
+        }
+        client = make_mock_client(uid_map)
+        client.select_folder.return_value = {b"UIDVALIDITY": 1}
+
+        worker = ScanWorker(client=client, folder_id=1, folder_name="INBOX")
+        messages = worker.run()
+        assert len(messages) == 1
+        assert messages[0].in_reply_to == "<original@example.com>"
+
+    def test_in_reply_to_empty_when_none(self):
+        """in_reply_to defaults to empty string when not set."""
+        uid_map = {
+            1: {
+                b"ENVELOPE": make_envelope(),
+                b"RFC822.SIZE": 512,
+                b"BODYSTRUCTURE": (b"text", b"plain", [], None, None, b"7bit", 100),
+                b"FLAGS": [],
+            },
+        }
+        client = make_mock_client(uid_map)
+        client.select_folder.return_value = {b"UIDVALIDITY": 1}
+
+        worker = ScanWorker(client=client, folder_id=1, folder_name="INBOX")
+        messages = worker.run()
+        assert len(messages) == 1
+        assert messages[0].in_reply_to == ""
+
+
+class TestThreadIdParsing:
+    def test_thread_id_parsed_from_xgm_thrid(self):
+        """ScanWorker extracts X-GM-THRID as thread_id."""
+        uid_map = {
+            1: {
+                b"ENVELOPE": make_envelope(),
+                b"RFC822.SIZE": 1024,
+                b"BODYSTRUCTURE": (b"text", b"plain", [], None, None, b"7bit", 100),
+                b"FLAGS": [],
+                b"X-GM-THRID": 1234567890,
+            },
+        }
+        client = make_mock_client(uid_map)
+        client.select_folder.return_value = {b"UIDVALIDITY": 1}
+
+        worker = ScanWorker(client=client, folder_id=1, folder_name="INBOX")
+        messages = worker.run()
+        assert len(messages) == 1
+        assert messages[0].thread_id == 1234567890
+
+    def test_thread_id_zero_when_absent(self):
+        """thread_id defaults to 0 when X-GM-THRID is not present (non-Gmail)."""
+        uid_map = {
+            1: {
+                b"ENVELOPE": make_envelope(),
+                b"RFC822.SIZE": 512,
+                b"BODYSTRUCTURE": (b"text", b"plain", [], None, None, b"7bit", 100),
+                b"FLAGS": [],
+            },
+        }
+        client = make_mock_client(uid_map)
+        client.select_folder.return_value = {b"UIDVALIDITY": 1}
+
+        worker = ScanWorker(client=client, folder_id=1, folder_name="INBOX")
+        messages = worker.run()
+        assert len(messages) == 1
+        assert messages[0].thread_id == 0

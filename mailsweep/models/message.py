@@ -12,6 +12,8 @@ class Message:
     uid: int = 0
     folder_id: int = 0
     message_id: str = ""
+    in_reply_to: str = ""
+    thread_id: int = 0
     from_addr: str = ""
     to_addr: str = ""
     subject: str = ""
@@ -40,6 +42,8 @@ class Message:
             uid=row["uid"],
             folder_id=row["folder_id"],
             message_id=row.get("message_id") or "",
+            in_reply_to=row.get("in_reply_to") or "",
+            thread_id=row.get("thread_id") or 0,
             from_addr=row["from_addr"] or "",
             to_addr=row.get("to_addr") or "",
             subject=row["subject"] or "",
