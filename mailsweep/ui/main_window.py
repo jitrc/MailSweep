@@ -349,8 +349,8 @@ class MainWindow(QMainWindow):
             rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
             items = [
                 TreemapItem(
-                    key=row["from_addr"],
-                    label=row["from_addr"].split("<")[-1].rstrip(">") if "<" in row["from_addr"] else row["from_addr"],
+                    key=row["sender_email"],
+                    label=row["sender_email"],
                     sublabel=f"{row['message_count']} msgs",
                     size_bytes=row["total_size_bytes"],
                 )

@@ -279,7 +279,12 @@ class MessageRepository:
     def get_sender_summary(
         self, folder_ids: list[int] | None = None
     ) -> list[dict[str, Any]]:
-        """Return per-sender aggregation: from_addr, count, total_size."""
+        """Return per-sender aggregation grouped by email address.
+
+        from_addr may be 'Name <email>' or just 'email'. We extract the
+        email portion so 'Alice <a@b.com>' and 'A <a@b.com>' merge into
+        one group. The display name shown is the most common variant.
+        """
         clauses: list[str] = []
         params: list[Any] = []
         if folder_ids:
@@ -287,13 +292,21 @@ class MessageRepository:
             clauses.append(f"folder_id IN ({placeholders})")
             params.extend(folder_ids)
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        # Extract email: take substring between < and >, else use full from_addr
         sql = f"""
-            SELECT from_addr,
-                   COUNT(*)        AS message_count,
-                   SUM(size_bytes) AS total_size_bytes
+            SELECT
+                CASE WHEN INSTR(from_addr, '<') > 0
+                     THEN LOWER(SUBSTR(from_addr,
+                                       INSTR(from_addr, '<') + 1,
+                                       INSTR(from_addr, '>') - INSTR(from_addr, '<') - 1))
+                     ELSE LOWER(from_addr)
+                END AS sender_email,
+                from_addr,
+                COUNT(*)        AS message_count,
+                SUM(size_bytes) AS total_size_bytes
             FROM messages
             {where}
-            GROUP BY from_addr
+            GROUP BY sender_email
             ORDER BY total_size_bytes DESC
             LIMIT 1000
         """

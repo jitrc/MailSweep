@@ -26,7 +26,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 
 ```bash
 # Clone and install
-git clone https://github.com/user/mailsweep.git
+git clone https://github.com/jitrc/MailSweep.git
 cd mailsweep
 uv sync --dev
 
