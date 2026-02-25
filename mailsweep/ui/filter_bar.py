@@ -41,7 +41,7 @@ class FilterBar(QWidget):
         self._subject_edit.setFixedWidth(140)
         layout.addWidget(self._subject_edit)
 
-        layout.addWidget(QLabel("From:"))
+        layout.addWidget(QLabel("Date:"))
         self._date_from = QDateEdit()
         self._date_from.setCalendarPopup(True)
         self._date_from.setDate(QDate(2000, 1, 1))
@@ -148,6 +148,12 @@ class FilterBar(QWidget):
         subject_text = self._subject_edit.text().strip()
         if subject_text:
             kwargs["subject_filter"] = subject_text
+        date_from = self._date_from.date()
+        if date_from > QDate(2000, 1, 1):
+            kwargs["date_from"] = date_from.toString("yyyy-MM-dd")
+        date_to = self._date_to.date()
+        if date_to < QDate.currentDate():
+            kwargs["date_to"] = date_to.toString("yyyy-MM-dd")
         size_min = self._size_min.value()
         if size_min > 0:
             kwargs["size_min"] = int(size_min * 1024 * 1024)

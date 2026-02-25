@@ -43,17 +43,11 @@ def _walk_and_strip(
     uid: int,
     saved: list[str],
     depth: int = 0,
-) -> bool:
-    """
-    Recursively walk the MIME tree.
-    Returns True if this part was removed (caller should drop it).
-    """
+) -> None:
+    """Recursively walk the MIME tree, replacing attachment parts with placeholders."""
     if depth > 20:
         logger.warning("MIME tree too deep at uid=%d depth=%d, stopping", uid, depth)
-        return False
-
-    content_type = msg.get_content_type()
-    disposition = (msg.get("Content-Disposition") or "").lower()
+        return
 
     # Leaf part that is an attachment
     if not msg.is_multipart():
@@ -62,21 +56,17 @@ def _walk_and_strip(
             dest = save_dir / filename
             size = _save_part(msg, dest)
             saved.append(filename)
-            # Replace with placeholder pointing to saved file
             _replace_with_placeholder(msg, filename, dest, size)
-            return False  # Keep the part (now a placeholder), don't remove
-        return False
+        return
 
     # Multipart: recurse children in-place (they become placeholders)
     payload = msg.get_payload()
     if not isinstance(payload, list):
-        return False
+        return
 
     for child in payload:
         if isinstance(child, EmailMessage):
             _walk_and_strip(child, save_dir, uid, saved, depth + 1)
-
-    return False
 
 
 def _is_attachment(part: EmailMessage) -> bool:
@@ -151,21 +141,6 @@ def _safe_filename(part: EmailMessage, uid: int, idx: int) -> str:
 
     # Ensure unique by prepending uid
     return f"{uid}_{idx}_{filename}"
-
-
-def _unwrap_single_child(parent: EmailMessage, child: EmailMessage) -> None:
-    """
-    Copy child's headers and payload into parent, effectively unwrapping
-    the degenerate multipart/mixed with a single part.
-    """
-    # Copy content-relevant headers from child
-    for key in ("Content-Type", "Content-Transfer-Encoding", "Content-Disposition"):
-        if key in parent:
-            del parent[key]
-        if child[key]:
-            parent[key] = child[key]
-
-    parent.set_payload(child.get_payload())
 
 
 def get_attachment_info(raw_bytes: bytes) -> tuple[bool, list[str]]:

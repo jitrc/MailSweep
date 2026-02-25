@@ -124,8 +124,10 @@ class DetachWorker(QObject):
                                 client.uid_expunge([msg.uid])
                                 logger.info("UID EXPUNGE %d done", msg.uid)
                             except Exception:
-                                client.expunge()
-                                logger.info("EXPUNGE (non-UID) done for folder %s", folder_name)
+                                logger.warning(
+                                    "UID EXPUNGE not supported for UID %d in %s, message flagged but not expunged",
+                                    msg.uid, folder_name,
+                                )
 
                         self.message_done.emit(msg, saved_names)
 

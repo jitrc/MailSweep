@@ -5,6 +5,26 @@ build/
 dist/
 wheels/
 *.egg-info
+*.egg
 
 # Virtual environments
 .venv
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Sensitive / user data
+.env
+.env.*
+*.db
+*.sqlite*
+*.log
+credentials.json
+token.json
+client_secret*.json
+
+# OS
+.DS_Store
+Thumbs.db

@@ -801,60 +801,31 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Selection", "Select messages first.")
             return
 
+        from mailsweep.imap.connection import find_trash_folder
+        folder_map = self._build_folder_name_map()
+        trash_folder = find_trash_folder(folder_map)
+        if trash_folder:
+            detail = f"Messages will be moved to {trash_folder}."
+        else:
+            detail = "Messages will be permanently deleted (no Trash folder found)."
+
         reply = QMessageBox.warning(
             self, "Delete Messages",
-            f"Move {len(messages)} message(s) to Trash?\n\n"
-            "Messages will go to [Gmail]/Trash and be purged after 30 days.",
+            f"Delete {len(messages)} message(s)?\n\n{detail}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
         assert self._current_account is not None
-        self._progress_panel.set_running(f"Deleting {len(messages)} messages…")
+        from mailsweep.workers.delete_worker import DeleteWorker
 
-        from collections import defaultdict
-        from mailsweep.imap.connection import connect, find_trash_folder
-
-        try:
-            client = connect(self._current_account)
-            by_folder: dict[int, list[Message]] = defaultdict(list)
-            for msg in messages:
-                by_folder[msg.folder_id].append(msg)
-
-            folder_map = self._build_folder_name_map()
-            trash_folder = find_trash_folder(folder_map)
-
-            for folder_id, folder_msgs in by_folder.items():
-                folder_name = folder_map.get(folder_id, "")
-                if not folder_name:
-                    continue
-                client.select_folder(folder_name, readonly=False)
-                uids = [m.uid for m in folder_msgs]
-
-                if trash_folder and folder_name != trash_folder:
-                    # Gmail-safe: COPY to Trash, then remove from this folder
-                    client.copy(uids, trash_folder)
-                    logger.info("Copied %d UIDs from %s to %s", len(uids), folder_name, trash_folder)
-
-                client.set_flags(uids, [b"\\Deleted"])
-                try:
-                    client.uid_expunge(uids)
-                except Exception:
-                    client.expunge()
-
-                self._msg_repo.delete_uids(folder_id, uids)
-                self._folder_repo.update_stats(folder_id)
-
-            client.logout()
-            self._progress_panel.set_done(f"Deleted {len(messages)} messages")
-            self._reload_messages()
-            self._refresh_folder_panel()
-            self._refresh_treemap()
-            self._refresh_size_label()
-        except Exception as exc:
-            self._progress_panel.set_error(str(exc))
-            logger.error("Delete error: %s", exc)
+        worker = DeleteWorker(
+            account=self._current_account,
+            messages=messages,
+            folder_id_to_name=folder_map,
+        )
+        self._run_worker(worker, f"Deleting {len(messages)} messages…")
 
     def _run_worker(self, worker, status_msg: str) -> None:
         """Wire a generic QObject worker to a QThread and start it."""

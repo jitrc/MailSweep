@@ -77,4 +77,5 @@ class SettingsDialog(QDialog):
         save_path = Path(self._save_dir_edit.text().strip())
         save_path.mkdir(parents=True, exist_ok=True)
         cfg.DEFAULT_SAVE_DIR = save_path
+        cfg.save_settings()
         self.accept()

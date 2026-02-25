@@ -3,6 +3,7 @@ name = "mailsweep"
 version = "0.1.0"
 description = "IMAP Mailbox Analyzer & Cleaner — visualize and reclaim email storage"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
 dependencies = [
     "imapclient>=3.0.0",
@@ -14,6 +15,10 @@ dependencies = [
     "keyring>=24.3.0",
     "chardet>=5.2.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/user/mailsweep"
+"Bug Tracker" = "https://github.com/user/mailsweep/issues"
 
 [dependency-groups]
 dev = ["pytest>=8.0.0", "pytest-qt>=4.3.1", "ruff", "mypy"]

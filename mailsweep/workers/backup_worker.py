@@ -111,7 +111,10 @@ class BackupWorker(QObject):
                             try:
                                 client.uid_expunge([msg.uid])
                             except Exception:
-                                client.expunge()
+                                logger.warning(
+                                    "UID EXPUNGE not supported for UID %d, message flagged but not expunged",
+                                    msg.uid,
+                                )
 
                         self.message_done.emit(msg, str(dest))
                         done += 1
