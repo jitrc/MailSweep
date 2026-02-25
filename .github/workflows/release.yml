@@ -99,6 +99,9 @@ jobs:
           Comment=IMAP Mailbox Analyzer & Cleaner
           DESKTOP
 
+          # Strip leading whitespace from desktop file (YAML heredoc adds indentation)
+          sed -i 's/^[[:space:]]*//' AppDir/usr/share/applications/mailsweep.desktop
+
           cp AppDir/usr/share/applications/mailsweep.desktop AppDir/mailsweep.desktop
 
           # Generate a simple icon
