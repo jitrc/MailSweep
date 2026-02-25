@@ -22,7 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from mailsweep.config import DB_PATH, DEFAULT_SAVE_DIR
+import mailsweep.config as cfg
+from mailsweep.config import DB_PATH
 from mailsweep.db.repository import AccountRepository, FolderRepository, MessageRepository
 from mailsweep.db.schema import init_db
 from mailsweep.models.account import Account
@@ -677,7 +678,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.information(
             self, "Extract Attachments",
             f"Extract attachments from {len(with_att)} message(s)?\n"
-            f"Attachments will be saved to:\n{DEFAULT_SAVE_DIR}\n\n"
+            f"Attachments will be saved to:\n{cfg.DEFAULT_SAVE_DIR}\n\n"
             "Messages on the server will NOT be modified.",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
         )
@@ -690,7 +691,7 @@ class MainWindow(QMainWindow):
         worker = DetachWorker(
             account=self._current_account,
             messages=with_att,
-            save_dir=DEFAULT_SAVE_DIR,
+            save_dir=cfg.DEFAULT_SAVE_DIR,
             folder_id_to_name=self._build_folder_name_map(),
             detach_from_server=False,
         )
@@ -711,7 +712,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.warning(
             self, "Detach Attachments",
             f"Detach attachments from {len(with_att)} message(s)?\n"
-            f"Attachments will be saved to:\n{DEFAULT_SAVE_DIR}\n\n"
+            f"Attachments will be saved to:\n{cfg.DEFAULT_SAVE_DIR}\n\n"
             "The original messages on the server will be replaced with stripped versions.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
@@ -724,7 +725,7 @@ class MainWindow(QMainWindow):
         worker = DetachWorker(
             account=self._current_account,
             messages=with_att,
-            save_dir=DEFAULT_SAVE_DIR,
+            save_dir=cfg.DEFAULT_SAVE_DIR,
             folder_id_to_name=self._build_folder_name_map(),
         )
         self._run_worker(worker, "Detaching attachments…")
@@ -744,7 +745,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.information(
             self, "Backup",
             f"Backup {len(messages)} message(s) to .eml files?\n"
-            f"Backup directory:\n{DEFAULT_SAVE_DIR / 'backups'}\n\n"
+            f"Backup directory:\n{cfg.DEFAULT_SAVE_DIR / 'backups'}\n\n"
             "Messages on the server will NOT be deleted.",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
         )
@@ -757,7 +758,7 @@ class MainWindow(QMainWindow):
         worker = BackupWorker(
             account=self._current_account,
             messages=messages,
-            backup_dir=DEFAULT_SAVE_DIR / "backups",
+            backup_dir=cfg.DEFAULT_SAVE_DIR / "backups",
             folder_id_to_name=self._build_folder_name_map(),
             delete_after=False,
         )
@@ -774,7 +775,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.warning(
             self, "Backup & Delete",
             f"Backup {len(messages)} message(s) to .eml files and DELETE from server?\n"
-            f"Backup directory:\n{DEFAULT_SAVE_DIR}\n\n"
+            f"Backup directory:\n{cfg.DEFAULT_SAVE_DIR / 'backups'}\n\n"
             "This operation is IRREVERSIBLE on the server.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
@@ -787,7 +788,7 @@ class MainWindow(QMainWindow):
         worker = BackupWorker(
             account=self._current_account,
             messages=messages,
-            backup_dir=DEFAULT_SAVE_DIR / "backups",
+            backup_dir=cfg.DEFAULT_SAVE_DIR / "backups",
             folder_id_to_name=self._build_folder_name_map(),
         )
         self._run_worker(worker, "Backing up and deleting…")
