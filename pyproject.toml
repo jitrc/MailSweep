@@ -4,6 +4,7 @@ version = "0.3.1"
 description = "IMAP Mailbox Analyzer & Cleaner — visualize and reclaim email storage"
 readme = "README.md"
 license = {text = "MIT"}
+authors = [{name = "Jit Ray Chowdhury", email = "jit.ray.c@gmail.com"}]
 requires-python = ">=3.11"
 dependencies = [
     "imapclient>=3.0.0",
