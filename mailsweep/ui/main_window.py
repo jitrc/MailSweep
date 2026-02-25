@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
         self._msg_table.backup_delete_requested.connect(self._on_backup_messages)
         self._msg_table.delete_requested.connect(self._on_delete_messages)
         self._msg_table.move_requested.connect(self._on_move_messages)
+        self._msg_table.remove_label_requested.connect(self._on_remove_label)
         self._msg_table.view_headers_requested.connect(self._on_view_headers)
         self._msg_table.show_to_toggled.connect(self._on_show_to_toggled)
         v_splitter.addWidget(self._msg_table)
@@ -1041,6 +1042,44 @@ class MainWindow(QMainWindow):
             folder_id_to_name=folder_map,
         )
         self._run_worker(worker, f"Deleting {len(messages)} messages…", updates_cache=True)
+
+    def _on_remove_label(self, messages: list[Message]) -> None:
+        """Remove messages from their current folders without Trash copy.
+
+        Used after Find Duplicate Labels — the message still exists in other folders.
+        """
+        if not messages:
+            QMessageBox.information(self, "No Selection", "Select messages first.")
+            return
+        if not self._current_account:
+            QMessageBox.warning(self, "No Account", "No account selected.")
+            return
+
+        folder_map = self._build_folder_name_map()
+        # Build summary of which folders will be affected
+        from collections import Counter
+        folder_counts = Counter(folder_map.get(m.folder_id, "?") for m in messages)
+        detail = "\n".join(f"  {name}: {cnt} msg(s)" for name, cnt in folder_counts.most_common())
+
+        reply = QMessageBox.warning(
+            self, "Remove Label",
+            f"Remove {len(messages)} message(s) from their current folders?\n\n"
+            f"{detail}\n\n"
+            "Messages will remain in other folders they belong to.\n"
+            "This does NOT move them to Trash.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from mailsweep.workers.remove_label_worker import RemoveLabelWorker
+
+        worker = RemoveLabelWorker(
+            account=self._current_account,
+            messages=messages,
+            folder_id_to_name=folder_map,
+        )
+        self._run_worker(worker, f"Removing {len(messages)} label(s)…", updates_cache=True)
 
     def _run_worker(
         self, worker, status_msg: str, *,

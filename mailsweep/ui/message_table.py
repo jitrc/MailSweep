@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 from mailsweep.models.message import Message
 from mailsweep.utils.size_fmt import human_size
 
-COLUMNS = ["", "From", "Subject", "Date", "Size", "Folder", "Attachments", "Role"]
+COLUMNS = ["", "From", "Subject", "Date", "Size", "Folder", "Attachments", "Tag"]
 COL_CHECK = 0
 COL_CORRESPONDENT = 1
 COL_SUBJECT = 2
@@ -224,6 +224,7 @@ class MessageTableView(QTableView):
     backup_delete_requested = pyqtSignal(list)  # list[Message]
     delete_requested = pyqtSignal(list)     # list[Message]
     move_requested = pyqtSignal(list)       # list[Message]
+    remove_label_requested = pyqtSignal(list)  # list[Message]
     view_headers_requested = pyqtSignal(object)  # Message
     show_to_toggled = pyqtSignal(bool)      # emitted on manual header toggle
 
@@ -308,6 +309,7 @@ class MessageTableView(QTableView):
         delete_act = menu.addAction(f"Delete ({n} msg(s))")
         menu.addSeparator()
         move_act = menu.addAction(f"Move to… ({n} msg(s))")
+        remove_label_act = menu.addAction(f"Remove Label ({n} msg(s))")
         menu.addSeparator()
         headers_act = menu.addAction("View Headers…")
 
@@ -317,6 +319,7 @@ class MessageTableView(QTableView):
         backup_del_act.triggered.connect(lambda: self.backup_delete_requested.emit(selected))
         delete_act.triggered.connect(lambda: self.delete_requested.emit(selected))
         move_act.triggered.connect(lambda: self.move_requested.emit(selected))
+        remove_label_act.triggered.connect(lambda: self.remove_label_requested.emit(selected))
         headers_act.triggered.connect(
             lambda: self.view_headers_requested.emit(selected[0]) if selected else None
         )
