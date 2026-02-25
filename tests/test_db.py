@@ -347,3 +347,115 @@ class TestUnlabelled:
         )
         assert len(messages) == 1
         assert messages[0].from_addr == "big@x.com"
+
+
+class TestMessageIdMatching:
+    """Tests for message_id-based cross-folder matching."""
+
+    @pytest.fixture
+    def gmail_account(self, account_repo):
+        acc = Account(
+            display_name="Gmail",
+            host="imap.gmail.com",
+            port=993,
+            username="user@gmail.com",
+            auth_type=AuthType.PASSWORD,
+            use_ssl=True,
+        )
+        return account_repo.upsert(acc)
+
+    @pytest.fixture
+    def gmail_folders(self, folder_repo, gmail_account):
+        inbox = folder_repo.upsert(Folder(account_id=gmail_account.id, name="INBOX"))
+        all_mail = folder_repo.upsert(Folder(account_id=gmail_account.id, name="[Gmail]/All Mail"))
+        sent = folder_repo.upsert(Folder(account_id=gmail_account.id, name="[Gmail]/Sent Mail"))
+        old = folder_repo.upsert(Folder(account_id=gmail_account.id, name="OLD/2016"))
+        return inbox, all_mail, sent, old
+
+    def test_unlabelled_uses_message_id(self, msg_repo, gmail_folders):
+        """message_id matching catches labels even when identity tuple differs."""
+        inbox, all_mail, sent, old = gmail_folders
+        mid = "<abc123@gmail.com>"
+        # Same message_id but slightly different subject encoding
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id=mid,
+                    from_addr="alice@x.com", subject="Hello World",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=5000),
+            Message(uid=50, folder_id=old.id, message_id=mid,
+                    from_addr="alice@x.com", subject="Hello  World",  # extra space
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=5000),
+        ])
+        other_ids = [inbox.id, sent.id, old.id]
+        count, size = msg_repo.get_unlabelled_stats(all_mail.id, other_ids)
+        assert count == 0, "message with label OLD/2016 should not be unlabelled"
+
+    def test_unlabelled_without_message_id_falls_back(self, msg_repo, gmail_folders):
+        """Messages without message_id still use identity-tuple fallback."""
+        inbox, all_mail, sent, _old = gmail_folders
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id="",
+                    from_addr="bob@x.com", subject="Old msg",
+                    date=datetime(2025, 1, 1, tzinfo=timezone.utc), size_bytes=3000),
+        ])
+        other_ids = [inbox.id, sent.id]
+        count, _ = msg_repo.get_unlabelled_stats(all_mail.id, other_ids)
+        assert count == 1, "no matching identity in other folders => unlabelled"
+
+    def test_get_folders_for_message_by_message_id(self, msg_repo, gmail_folders):
+        """get_folders_for_message returns all folders sharing the same message_id."""
+        inbox, all_mail, _sent, old = gmail_folders
+        mid = "<xyz789@gmail.com>"
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id=mid,
+                    from_addr="a@x.com", subject="Test", size_bytes=1000),
+            Message(uid=10, folder_id=inbox.id, message_id=mid,
+                    from_addr="a@x.com", subject="Test", size_bytes=1000),
+            Message(uid=20, folder_id=old.id, message_id=mid,
+                    from_addr="a@x.com", subject="Test", size_bytes=1000),
+        ])
+        msg = Message(uid=1, folder_id=all_mail.id, message_id=mid,
+                      from_addr="a@x.com", subject="Test", size_bytes=1000)
+        folders = msg_repo.get_folders_for_message(msg)
+        assert set(folders) == {"INBOX", "[Gmail]/All Mail", "OLD/2016"}
+
+    def test_get_folders_for_message_fallback(self, msg_repo, gmail_folders):
+        """get_folders_for_message falls back to identity tuple when no message_id."""
+        inbox, all_mail, _sent, _old = gmail_folders
+        dt = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id="",
+                    from_addr="a@x.com", subject="No MID", date=dt, size_bytes=2000),
+            Message(uid=10, folder_id=inbox.id, message_id="",
+                    from_addr="a@x.com", subject="No MID", date=dt, size_bytes=2000),
+        ])
+        msg = Message(uid=1, folder_id=all_mail.id, message_id="",
+                      from_addr="a@x.com", subject="No MID", date=dt, size_bytes=2000)
+        folders = msg_repo.get_folders_for_message(msg)
+        assert set(folders) == {"INBOX", "[Gmail]/All Mail"}
+
+    def test_dedup_uses_message_id(self, msg_repo, gmail_folders):
+        """get_dedup_total_size deduplicates by message_id."""
+        inbox, all_mail, _sent, _old = gmail_folders
+        mid = "<dedup@gmail.com>"
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, message_id=mid,
+                    from_addr="a@x.com", subject="Dup", size_bytes=5000),
+            Message(uid=10, folder_id=inbox.id, message_id=mid,
+                    from_addr="a@x.com", subject="Dup", size_bytes=5000),
+        ])
+        size, count = msg_repo.get_dedup_total_size(
+            folder_ids=[all_mail.id, inbox.id]
+        )
+        assert count == 1
+        assert size == 5000
+
+    def test_message_id_persisted_via_upsert(self, msg_repo, sample_folder):
+        """message_id is saved and retrievable."""
+        mid = "<test@example.com>"
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=sample_folder.id, message_id=mid,
+                    from_addr="a@x.com", subject="Test", size_bytes=100),
+        ])
+        results = msg_repo.query_messages(folder_ids=[sample_folder.id])
+        assert len(results) == 1
+        assert results[0].message_id == mid

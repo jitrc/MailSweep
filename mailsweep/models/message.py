@@ -11,7 +11,9 @@ class Message:
     id: int | None = None
     uid: int = 0
     folder_id: int = 0
+    message_id: str = ""
     from_addr: str = ""
+    to_addr: str = ""
     subject: str = ""
     date: datetime | None = None
     size_bytes: int = 0
@@ -37,7 +39,9 @@ class Message:
             id=row["id"],
             uid=row["uid"],
             folder_id=row["folder_id"],
+            message_id=row.get("message_id") or "",
             from_addr=row["from_addr"] or "",
+            to_addr=row.get("to_addr") or "",
             subject=row["subject"] or "",
             date=datetime.fromisoformat(row["date"]) if row.get("date") else None,
             size_bytes=row["size_bytes"] or 0,

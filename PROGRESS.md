@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
-**Last updated:** 2026-02-24
-**Status:** All 6 phases implemented + extensive post-phase enhancements. App running. ~4,500 lines of Python. 42/42 tests passing.
+**Last updated:** 2026-02-25
+**Status:** All 6 phases implemented + extensive post-phase enhancements + full code review complete. App running. ~4,700 lines of Python. 56/56 tests passing. Published on GitHub.
 
 ---
 
@@ -35,6 +35,7 @@ mailsweep/                         ← project root
 │   │   ├── qt_scan_worker.py      ← QObject wrapper (moveToThread), incremental
 │   │   ├── detach_worker.py       ← FETCH→strip→APPEND→DELETE→EXPUNGE
 │   │   ├── backup_worker.py       ← RFC822→.eml→DELETE→EXPUNGE
+│   │   ├── delete_worker.py       ← Gmail-safe delete on background thread
 │   │   └── incremental_scan.py    ← get_new_deleted_uids(), CONDSTORE check
 │   └── ui/
 │       ├── main_window.py         ← QMainWindow, splitter layout, all wiring
@@ -47,8 +48,8 @@ mailsweep/                         ← project root
 │       ├── settings_dialog.py     ← batch size, max rows, save dir
 │       └── log_dock.py            ← live log viewer, per-level colour, dockable
 └── tests/
-    ├── test_db.py                 ← 15 tests: CRUD, queries, stats
-    ├── test_scan_worker.py        ← 15 tests: mock IMAP, BODYSTRUCTURE parser
+    ├── test_db.py                 ← 22 tests: CRUD, queries, stats, message_id matching
+    ├── test_scan_worker.py        ← 17 tests: mock IMAP, BODYSTRUCTURE parser, message_id
     └── test_mime_utils.py         ← 11 tests: strip, save, path traversal
 ```
 
@@ -120,6 +121,24 @@ Detach worker doesn't need this — it APPENDs a replacement message, so the old
 | Gmail delete permanently removed messages (bypassed Trash) | COPY to `[Gmail]/Trash` before `\Deleted`+`EXPUNGE` |
 | Detach didn't modify original email on server | Added `readonly=False` to `select_folder`, added logging |
 | Detached attachments left no trace in email | Replace with text/plain placeholder (filename, size, local path) |
+| Settings save dir not taking effect for extract/backup | Changed `from config import X` to `import config as cfg` (live lookup) |
+| Senders with different display names grouped separately | Extract email with SQL `INSTR`/`SUBSTR`, group by lowercase email |
+| Delete ran on main thread (GUI freeze) | Created `DeleteWorker` on background `QThread` |
+| Dangerous full EXPUNGE fallback if UID EXPUNGE unsupported | Changed to warning log instead of expunging all `\Deleted` messages |
+| Filter bar "From:" label on date picker | Fixed to "Date:" |
+| Date filters missing from `get_filter_kwargs()` | Added `date_from`/`date_to` to filter bar output |
+| Dead code `_unwrap_single_child()` in mime_utils | Removed |
+| `_walk_and_strip` docstring/return type wrong | Fixed return type from `bool` to `None` |
+| Settings not persisted across sessions | Added `save_settings()`/`load_settings()` in config.py |
+| Hardcoded "[Gmail]/Trash" in delete dialog | Dynamic trash folder name via `find_trash_folder()` |
+| DB writes had no rollback on error | Added `_safe_commit()` context manager to all 7 write methods |
+| Outlook token refresh returned expired token | Return `None` on refresh failure instead of stale token |
+| Bare `except: pass` in BODYSTRUCTURE parser | Added `logger.debug()` for diagnostics |
+| Worker callbacks could fire on dead widget after close | Added `_is_closing` guard in `closeEvent` and `_on_op_finished` |
+| Log handler accumulated on dock widget recreate | Remove handler in `destroyed` signal |
+| Treemap hover highlight stuck after mouse leaves | Added `leaveEvent` to clear `_hovered_key` |
+| Unlabelled folder included messages with labels (e.g. OLD/2016) | Added `message_id` (RFC 5322) to schema; cross-folder matching now uses globally unique ID |
+| View Headers only showed single folder, not all Gmail labels | `get_folders_for_message()` queries all folders sharing same `message_id`; dialog shows "Labels:" |
 
 ---
 
@@ -136,6 +155,10 @@ Detach worker doesn't need this — it APPENDs a replacement message, so the old
 | **Attachment placeholder** | Detached attachments replaced with text/plain showing original name, size, local path |
 | **Gmail-safe delete** | COPY to [Gmail]/Trash before EXPUNGE (prevents permanent deletion) |
 | **Organized save paths** | Attachments saved to `<label>/<uid>_<subject>/` matching backup folder structure |
+| **Delete worker thread** | Delete operation moved off main thread to `DeleteWorker` with progress signals |
+| **Settings persistence** | Batch size, max rows, save dir saved to `~/.config/mailsweep/settings.json` |
+| **Sender email dedup** | Sender treemap/summary groups by extracted email, not full "Name \<email\>" string |
+| **Message-ID matching** | `message_id` from ENVELOPE used for cross-folder dedup, unlabelled detection, and "View Headers → Labels" |
 
 ---
 
@@ -150,8 +173,7 @@ Detach worker doesn't need this — it APPENDs a replacement message, so the old
 
 ### Medium priority
 - [ ] **Delete confirmation shows total size** — "Delete 3 messages (47 MB)?" is more useful
-- [ ] **Progress panel for delete** — in-thread delete blocks the GUI momentarily on large batches;
-      move to worker thread
+- [x] ~~**Progress panel for delete**~~ — moved to `DeleteWorker` on background `QThread`
 - [ ] **Post-detach incremental re-sync** — after detach/backup, new UIDs should be picked up
       without a full rescan (currently requires manual "Scan Mailbox")
 - [ ] **CONDSTORE / HIGHESTMODSEQ** — `supports_condstore()` helper exists but not used;
@@ -196,9 +218,32 @@ uv run ruff check mailsweep/
 
 ---
 
+## Code Review (completed)
+
+Full code review performed covering secrets, core logic, UI, and project config.
+All critical, high, medium, and low priority issues resolved across 4 commits:
+
+| Priority | Issues Found | Issues Fixed |
+|----------|-------------|--------------|
+| Critical | 7 | 7 |
+| High | 6 | 6 |
+| Medium | 5 | 5 |
+| Low | 3 | 3 |
+
+Key items: delete moved to worker thread, DB rollback safety, dangerous EXPUNGE fallback removed,
+settings persistence, filter bar fixes, dead code removal, log handler leak, treemap hover fix,
+Outlook token refresh fix, README/LICENSE/.gitignore added, pyproject.toml metadata.
+
+---
+
 ## Git Log
 
 ```
+0f22b1c  fix: medium/low priority code review issues
+dd0523d  fix: merge senders by email address, use jitrc/MailSweep URLs
+7470014  fix: code review — critical and high priority issues
+e5828a3  fix: settings save dir not taking effect for extract/backup operations
+b44f7de  fix: Gmail-safe delete (COPY to Trash before EXPUNGE), attachment placeholders
 996e4da  fix: organize extracted attachments by label/subject like backup
 61b69e9  feat: treemap drill-down, view modes, dedup sizes, backup/extract without delete
 78b4c5c  feat: scan selected folder + auto-fetch folder list on account add/select

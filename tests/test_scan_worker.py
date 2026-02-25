@@ -52,13 +52,14 @@ def make_envelope(
     from_name: bytes = b"Alice",
     from_mbox: bytes = b"alice",
     from_host: bytes = b"example.com",
+    message_id: bytes = b"<test@example.com>",
 ):
     """Build a mock Envelope matching imapclient 3.x API."""
     from datetime import datetime, timezone
     if date is None:
         date = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     addr = _MockAddress(from_name, None, from_mbox, from_host)
-    return _MockEnvelope(date=date, subject=subject, from_=(addr,))
+    return _MockEnvelope(date=date, subject=subject, from_=(addr,), message_id=message_id)
 
 
 class TestScanWorker:
@@ -119,6 +120,42 @@ class TestScanWorker:
         assert len(messages) == 1
         assert messages[0].has_attachment is True
         assert len(messages[0].attachment_names) > 0
+
+    def test_message_id_parsed_from_envelope(self):
+        uid_map = {
+            1: {
+                b"ENVELOPE": make_envelope(
+                    subject=b"Hello",
+                    message_id=b"<unique123@gmail.com>",
+                ),
+                b"RFC822.SIZE": 1024,
+                b"BODYSTRUCTURE": (b"text", b"plain", [], None, None, b"7bit", 100),
+                b"FLAGS": [],
+            },
+        }
+        client = make_mock_client(uid_map)
+        client.select_folder.return_value = {b"UIDVALIDITY": 1}
+
+        worker = ScanWorker(client=client, folder_id=1, folder_name="INBOX")
+        messages = worker.run()
+        assert len(messages) == 1
+        assert messages[0].message_id == "<unique123@gmail.com>"
+
+    def test_message_id_empty_without_envelope(self):
+        uid_map = {
+            1: {
+                b"RFC822.SIZE": 512,
+                b"BODYSTRUCTURE": (b"text", b"plain", [], None, None, b"7bit", 100),
+                b"FLAGS": [],
+            },
+        }
+        client = make_mock_client(uid_map)
+        client.select_folder.return_value = {b"UIDVALIDITY": 1}
+
+        worker = ScanWorker(client=client, folder_id=1, folder_name="INBOX")
+        messages = worker.run()
+        assert len(messages) == 1
+        assert messages[0].message_id == ""
 
     def test_cancel_stops_scan(self):
         uids = list(range(1, 1001))

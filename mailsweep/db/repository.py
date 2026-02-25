@@ -188,10 +188,11 @@ class MessageRepository:
             self._conn.executemany(
                 """
                 INSERT INTO messages
-                    (uid, folder_id, from_addr, to_addr, subject, date, size_bytes,
-                     has_attachment, attachment_names, flags, cached_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uid, folder_id, message_id, from_addr, to_addr, subject, date,
+                     size_bytes, has_attachment, attachment_names, flags, cached_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(uid, folder_id) DO UPDATE SET
+                    message_id       = excluded.message_id,
                     from_addr        = excluded.from_addr,
                     to_addr          = excluded.to_addr,
                     subject          = excluded.subject,
@@ -204,7 +205,7 @@ class MessageRepository:
                 """,
                 [
                     (
-                        m.uid, m.folder_id,
+                        m.uid, m.folder_id, m.message_id,
                         m.from_addr, m.to_addr, m.subject,
                         m.date.isoformat() if m.date else None,
                         m.size_bytes, int(m.has_attachment),
@@ -387,8 +388,8 @@ class MessageRepository:
         """Return (dedup_size_bytes, dedup_count) after removing duplicate messages.
 
         Gmail labels cause the same message to appear in multiple folders.
-        We deduplicate by (from_addr, subject, date, size_bytes) as a proxy
-        for message identity.
+        We deduplicate by message_id when available, falling back to
+        (from_addr, subject, date, size_bytes) for messages without one.
         """
         clauses: list[str] = []
         params: list[Any] = []
@@ -397,34 +398,54 @@ class MessageRepository:
             clauses.append(f"folder_id IN ({placeholders})")
             params.extend(folder_ids)
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        where_and = ("AND " + " AND ".join(clauses)) if clauses else ""
         sql = f"""
             SELECT COALESCE(SUM(size_bytes), 0) AS total,
                    COUNT(*) AS cnt
             FROM (
-                SELECT DISTINCT from_addr, subject, date, size_bytes
+                SELECT DISTINCT message_id, size_bytes
                 FROM messages
-                {where}
+                WHERE message_id != '' {where_and}
+                UNION ALL
+                SELECT DISTINCT from_addr || subject || date, size_bytes
+                FROM messages
+                WHERE message_id = '' {where_and}
             )
         """
-        row = self._conn.execute(sql, params).fetchone()
+        all_params = params + params
+        row = self._conn.execute(sql, all_params).fetchone()
         return (row[0], row[1]) if row else (0, 0)
 
     # ── Unlabelled (archived-only) queries ─────────────────────────────────
 
     def _unlabelled_not_exists(self, other_folder_ids: list[int]) -> tuple[str, list[Any]]:
-        """Return (SQL fragment, params) for the NOT EXISTS subquery."""
+        """Return (SQL fragment, params) for the NOT EXISTS subquery.
+
+        Uses message_id for matching when available (reliable, globally unique).
+        Falls back to identity tuple for messages without message_id.
+        """
         placeholders = ",".join("?" * len(other_folder_ids))
         fragment = (
-            "NOT EXISTS ("
-            "  SELECT 1 FROM messages o"
-            f"  WHERE o.folder_id IN ({placeholders})"
-            "    AND o.from_addr IS m.from_addr"
-            "    AND o.subject   IS m.subject"
-            "    AND o.date      IS m.date"
-            "    AND o.size_bytes = m.size_bytes"
+            "("
+            # Messages WITH message_id: match by message_id
+            "  (m.message_id != '' AND NOT EXISTS ("
+            "    SELECT 1 FROM messages o"
+            f"    WHERE o.folder_id IN ({placeholders})"
+            "      AND o.message_id = m.message_id"
+            "  ))"
+            "  OR"
+            # Messages WITHOUT message_id: fall back to identity tuple
+            "  (m.message_id = '' AND NOT EXISTS ("
+            "    SELECT 1 FROM messages o"
+            f"    WHERE o.folder_id IN ({placeholders})"
+            "      AND o.from_addr IS m.from_addr"
+            "      AND o.subject   IS m.subject"
+            "      AND o.date      IS m.date"
+            "      AND o.size_bytes = m.size_bytes"
+            "  ))"
             ")"
         )
-        return fragment, list(other_folder_ids)
+        return fragment, list(other_folder_ids) + list(other_folder_ids)
 
     def get_unlabelled_stats(
         self,
@@ -524,3 +545,40 @@ class MessageRepository:
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
         return [Message.from_row(dict(r)) for r in rows]
+
+    def get_folders_for_message(self, msg: Message) -> list[str]:
+        """Return all folder names containing the same physical message.
+
+        Uses message_id for matching when available; falls back to identity tuple.
+        """
+        if msg.message_id:
+            rows = self._conn.execute(
+                """
+                SELECT DISTINCT f.name
+                FROM messages m
+                JOIN folders f ON f.id = m.folder_id
+                WHERE m.message_id = ?
+                ORDER BY f.name
+                """,
+                (msg.message_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT DISTINCT f.name
+                FROM messages m
+                JOIN folders f ON f.id = m.folder_id
+                WHERE m.from_addr IS ?
+                  AND m.subject   IS ?
+                  AND m.date      IS ?
+                  AND m.size_bytes = ?
+                ORDER BY f.name
+                """,
+                (
+                    msg.from_addr,
+                    msg.subject,
+                    msg.date.isoformat() if msg.date else None,
+                    msg.size_bytes,
+                ),
+            ).fetchall()
+        return [r["name"] for r in rows]

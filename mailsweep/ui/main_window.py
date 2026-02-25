@@ -1054,9 +1054,15 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dlg)
         text = QPlainTextEdit()
         text.setReadOnly(True)
+
+        # Look up all folders/labels for this message
+        all_folders = self._msg_repo.get_folders_for_message(msg)
+        labels_str = ", ".join(all_folders) if all_folders else msg.folder_name
+
         text.setPlainText(
             f"UID: {msg.uid}\n"
-            f"Folder: {msg.folder_name}\n"
+            f"Message-ID: {msg.message_id}\n"
+            f"Labels: {labels_str}\n"
             f"From: {msg.from_addr}\n"
             f"To: {msg.to_addr}\n"
             f"Subject: {msg.subject}\n"

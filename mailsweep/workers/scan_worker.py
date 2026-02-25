@@ -106,7 +106,9 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
         # Address has: .name (bytes), .route, .mailbox (bytes), .host (bytes)
         if envelope is not None:
             from_addr = _envelope_addr(getattr(envelope, "from_", None))
+            to_addr = _envelope_addr(getattr(envelope, "to", None))
             subject = _decode_header(getattr(envelope, "subject", b""))
+            message_id = _b(getattr(envelope, "message_id", b""))
             raw_date = getattr(envelope, "date", None)
             # .date is already a datetime in imapclient 3.x
             if isinstance(raw_date, datetime):
@@ -115,7 +117,9 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
                 date = _parse_date(raw_date)
         else:
             from_addr = ""
+            to_addr = ""
             subject = ""
+            message_id = ""
             date = None
 
         has_attachment, attachment_names = _parse_bodystructure(bodystructure)
@@ -123,7 +127,9 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
         return Message(
             uid=uid,
             folder_id=folder_id,
+            message_id=message_id,
             from_addr=from_addr,
+            to_addr=to_addr,
             subject=subject,
             date=date,
             size_bytes=size or 0,

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS messages (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     uid              INTEGER NOT NULL,
     folder_id        INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    message_id       TEXT    NOT NULL DEFAULT '',
     from_addr        TEXT,
     to_addr          TEXT,
     subject          TEXT,
@@ -48,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_from       ON messages(from_addr);
 CREATE INDEX IF NOT EXISTS idx_messages_date       ON messages(date);
 CREATE INDEX IF NOT EXISTS idx_messages_attachment ON messages(has_attachment) WHERE has_attachment=1;
 CREATE INDEX IF NOT EXISTS idx_messages_folder     ON messages(folder_id);
+CREATE INDEX IF NOT EXISTS idx_messages_msgid      ON messages(message_id);
 """
 
 
@@ -68,6 +70,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
     if "to_addr" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN to_addr TEXT")
+    if "message_id" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN message_id TEXT NOT NULL DEFAULT ''")
 
     # Composite index for identity-based lookups (unlabelled detection, dedup)
     conn.execute(
