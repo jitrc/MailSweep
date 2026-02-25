@@ -182,6 +182,13 @@ class _TreemapCanvas(QWidget):
                     self.setToolTip(tip)
         super().mouseMoveEvent(event)
 
+    def leaveEvent(self, event) -> None:
+        if self._hovered_key is not None:
+            self._hovered_key = None
+            self.setToolTip("")
+            self.update()
+        super().leaveEvent(event)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()

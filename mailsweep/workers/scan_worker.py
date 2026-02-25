@@ -268,8 +268,8 @@ def _parse_bodystructure(
             return True, [filename]
         if is_attachment:
             return True, [f"{main_type}/{sub_type}"]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not parse BODYSTRUCTURE part: %s", exc)
 
     return False, []
 

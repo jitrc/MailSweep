@@ -1,13 +1,28 @@
 """Repository — all DB read/write operations for accounts, folders, messages."""
 from __future__ import annotations
 
+import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Generator
 
 from mailsweep.models.account import Account, AuthType
 from mailsweep.models.folder import Folder
 from mailsweep.models.message import Message
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _safe_commit(conn: sqlite3.Connection) -> Generator[None, None, None]:
+    """Commit on success, rollback on error."""
+    try:
+        yield
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _now_iso() -> str:
@@ -19,25 +34,25 @@ class AccountRepository:
         self._conn = conn
 
     def upsert(self, account: Account) -> Account:
-        cur = self._conn.execute(
-            """
-            INSERT INTO accounts (display_name, host, port, username, auth_type, use_ssl)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(host, username) DO UPDATE SET
-                display_name = excluded.display_name,
-                port         = excluded.port,
-                auth_type    = excluded.auth_type,
-                use_ssl      = excluded.use_ssl
-            RETURNING id
-            """,
-            (
-                account.display_name, account.host, account.port,
-                account.username, account.auth_type.value, int(account.use_ssl),
-            ),
-        )
-        row = cur.fetchone()
-        self._conn.commit()
-        account.id = row["id"]
+        with _safe_commit(self._conn):
+            cur = self._conn.execute(
+                """
+                INSERT INTO accounts (display_name, host, port, username, auth_type, use_ssl)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(host, username) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    port         = excluded.port,
+                    auth_type    = excluded.auth_type,
+                    use_ssl      = excluded.use_ssl
+                RETURNING id
+                """,
+                (
+                    account.display_name, account.host, account.port,
+                    account.username, account.auth_type.value, int(account.use_ssl),
+                ),
+            )
+            row = cur.fetchone()
+            account.id = row["id"]
         return account
 
     def get_all(self) -> list[Account]:
@@ -51,8 +66,8 @@ class AccountRepository:
         return self._row_to_account(row) if row else None
 
     def delete(self, account_id: int) -> None:
-        self._conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
-        self._conn.commit()
+        with _safe_commit(self._conn):
+            self._conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
 
     def _row_to_account(self, row: sqlite3.Row) -> Account:
         return Account(
@@ -71,26 +86,26 @@ class FolderRepository:
         self._conn = conn
 
     def upsert(self, folder: Folder) -> Folder:
-        cur = self._conn.execute(
-            """
-            INSERT INTO folders (account_id, name, uid_validity, message_count, total_size_bytes, last_scanned_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(account_id, name) DO UPDATE SET
-                uid_validity     = excluded.uid_validity,
-                message_count    = excluded.message_count,
-                total_size_bytes = excluded.total_size_bytes,
-                last_scanned_at  = excluded.last_scanned_at
-            RETURNING id
-            """,
-            (
-                folder.account_id, folder.name, folder.uid_validity,
-                folder.message_count, folder.total_size_bytes,
-                folder.last_scanned_at.isoformat() if folder.last_scanned_at else None,
-            ),
-        )
-        row = cur.fetchone()
-        self._conn.commit()
-        folder.id = row["id"]
+        with _safe_commit(self._conn):
+            cur = self._conn.execute(
+                """
+                INSERT INTO folders (account_id, name, uid_validity, message_count, total_size_bytes, last_scanned_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, name) DO UPDATE SET
+                    uid_validity     = excluded.uid_validity,
+                    message_count    = excluded.message_count,
+                    total_size_bytes = excluded.total_size_bytes,
+                    last_scanned_at  = excluded.last_scanned_at
+                RETURNING id
+                """,
+                (
+                    folder.account_id, folder.name, folder.uid_validity,
+                    folder.message_count, folder.total_size_bytes,
+                    folder.last_scanned_at.isoformat() if folder.last_scanned_at else None,
+                ),
+            )
+            row = cur.fetchone()
+            folder.id = row["id"]
         return folder
 
     def get_by_account(self, account_id: int) -> list[Folder]:
@@ -115,25 +130,25 @@ class FolderRepository:
 
     def invalidate(self, folder_id: int) -> None:
         """Delete all messages for this folder (UID validity changed)."""
-        self._conn.execute("DELETE FROM messages WHERE folder_id = ?", (folder_id,))
-        self._conn.execute(
-            "UPDATE folders SET uid_validity=0, message_count=0, total_size_bytes=0, last_scanned_at=NULL WHERE id=?",
-            (folder_id,),
-        )
-        self._conn.commit()
+        with _safe_commit(self._conn):
+            self._conn.execute("DELETE FROM messages WHERE folder_id = ?", (folder_id,))
+            self._conn.execute(
+                "UPDATE folders SET uid_validity=0, message_count=0, total_size_bytes=0, last_scanned_at=NULL WHERE id=?",
+                (folder_id,),
+            )
 
     def update_stats(self, folder_id: int) -> None:
         """Recompute message_count and total_size_bytes from messages table."""
-        self._conn.execute(
-            """
-            UPDATE folders SET
-                message_count    = (SELECT COUNT(*)    FROM messages WHERE folder_id = folders.id),
-                total_size_bytes = (SELECT COALESCE(SUM(size_bytes), 0) FROM messages WHERE folder_id = folders.id)
-            WHERE id = ?
-            """,
-            (folder_id,),
-        )
-        self._conn.commit()
+        with _safe_commit(self._conn):
+            self._conn.execute(
+                """
+                UPDATE folders SET
+                    message_count    = (SELECT COUNT(*)    FROM messages WHERE folder_id = folders.id),
+                    total_size_bytes = (SELECT COALESCE(SUM(size_bytes), 0) FROM messages WHERE folder_id = folders.id)
+                WHERE id = ?
+                """,
+                (folder_id,),
+            )
 
     def _row_to_folder(self, row: sqlite3.Row) -> Folder:
         return Folder(
@@ -157,44 +172,44 @@ class MessageRepository:
     def upsert_batch(self, messages: list[Message]) -> None:
         """Batch upsert messages — fast path for scan worker."""
         now = _now_iso()
-        self._conn.executemany(
-            """
-            INSERT INTO messages
-                (uid, folder_id, from_addr, subject, date, size_bytes,
-                 has_attachment, attachment_names, flags, cached_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(uid, folder_id) DO UPDATE SET
-                from_addr        = excluded.from_addr,
-                subject          = excluded.subject,
-                date             = excluded.date,
-                size_bytes       = excluded.size_bytes,
-                has_attachment   = excluded.has_attachment,
-                attachment_names = excluded.attachment_names,
-                flags            = excluded.flags,
-                cached_at        = excluded.cached_at
-            """,
-            [
-                (
-                    m.uid, m.folder_id,
-                    m.from_addr, m.subject,
-                    m.date.isoformat() if m.date else None,
-                    m.size_bytes, int(m.has_attachment),
-                    m.attachment_names_json, m.flags_json, now,
-                )
-                for m in messages
-            ],
-        )
-        self._conn.commit()
+        with _safe_commit(self._conn):
+            self._conn.executemany(
+                """
+                INSERT INTO messages
+                    (uid, folder_id, from_addr, subject, date, size_bytes,
+                     has_attachment, attachment_names, flags, cached_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(uid, folder_id) DO UPDATE SET
+                    from_addr        = excluded.from_addr,
+                    subject          = excluded.subject,
+                    date             = excluded.date,
+                    size_bytes       = excluded.size_bytes,
+                    has_attachment   = excluded.has_attachment,
+                    attachment_names = excluded.attachment_names,
+                    flags            = excluded.flags,
+                    cached_at        = excluded.cached_at
+                """,
+                [
+                    (
+                        m.uid, m.folder_id,
+                        m.from_addr, m.subject,
+                        m.date.isoformat() if m.date else None,
+                        m.size_bytes, int(m.has_attachment),
+                        m.attachment_names_json, m.flags_json, now,
+                    )
+                    for m in messages
+                ],
+            )
 
     def delete_uids(self, folder_id: int, uids: list[int]) -> None:
         if not uids:
             return
         placeholders = ",".join("?" * len(uids))
-        self._conn.execute(
-            f"DELETE FROM messages WHERE folder_id = ? AND uid IN ({placeholders})",
-            [folder_id, *uids],
-        )
-        self._conn.commit()
+        with _safe_commit(self._conn):
+            self._conn.execute(
+                f"DELETE FROM messages WHERE folder_id = ? AND uid IN ({placeholders})",
+                [folder_id, *uids],
+            )
 
     def get_uids_for_folder(self, folder_id: int) -> set[int]:
         rows = self._conn.execute(

@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         self._scan_worker: QtScanWorker | None = None
         self._op_thread: QThread | None = None
         self._op_worker: object | None = None
+        self._is_closing = False
 
         self._build_ui()
         self._load_accounts()
@@ -840,6 +841,7 @@ class MainWindow(QMainWindow):
         if hasattr(worker, "progress"):
             worker.progress.connect(
                 lambda done, total, msg: self._progress_panel.set_progress(done, total, msg)
+                if not self._is_closing else None
             )
         if hasattr(worker, "error"):
             worker.error.connect(self._on_scan_error)
@@ -864,6 +866,8 @@ class MainWindow(QMainWindow):
         logger.info("Operation done for message uid=%s: %s", msg.uid, result)
 
     def _on_op_finished(self) -> None:
+        if self._is_closing:
+            return
         self._progress_panel.set_done("Operation complete")
         self._reload_messages()
         self._refresh_folder_panel()
@@ -979,6 +983,7 @@ class MainWindow(QMainWindow):
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:
+        self._is_closing = True
         if self._scan_worker:
             self._scan_worker.cancel()
         self._conn.close()

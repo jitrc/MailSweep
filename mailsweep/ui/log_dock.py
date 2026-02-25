@@ -84,6 +84,10 @@ class LogDockWidget(QDockWidget):
         self._handler.setFormatter(formatter)
         self._handler.log_record.connect(self._append_log)
         logging.getLogger().addHandler(self._handler)
+        self.destroyed.connect(self._remove_handler)
+
+    def _remove_handler(self) -> None:
+        logging.getLogger().removeHandler(self._handler)
 
     def _append_log(self, level: int, message: str) -> None:
         color = _LEVEL_COLORS.get(level, QColor(220, 220, 220))

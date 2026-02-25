@@ -144,8 +144,9 @@ def get_outlook_access_token(username: str) -> str | None:
         result = app.acquire_token_by_refresh_token(refresh_token, scopes=OUTLOOK_SCOPES)
 
         if "error" in result:
-            logger.warning("MSAL refresh failed: %s", result.get("error"))
-            return data.get("access_token")  # Try old token as fallback
+            logger.warning("MSAL refresh failed: %s — %s",
+                           result.get("error"), result.get("error_description"))
+            return None
 
         data["access_token"] = result["access_token"]
         if "refresh_token" in result:
