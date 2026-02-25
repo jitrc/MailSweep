@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-24
-**Status:** All 6 phases implemented. App running. ~3,800 lines of Python. 41/41 tests passing.
+**Status:** All 6 phases implemented + extensive post-phase enhancements. App running. ~4,500 lines of Python. 42/42 tests passing.
 
 ---
 
@@ -28,7 +28,7 @@ mailsweep/                         ← project root
 │   │   ├── schema.py              ← init_db(), CREATE TABLE + indexes
 │   │   └── repository.py          ← AccountRepo, FolderRepo, MessageRepo
 │   ├── imap/
-│   │   ├── connection.py          ← connect() — password + OAuth2 dispatch
+│   │   ├── connection.py          ← connect(), find_trash_folder(), list_folders()
 │   │   └── oauth2.py              ← Gmail XOAUTH2, Outlook MSAL, token refresh
 │   ├── workers/
 │   │   ├── scan_worker.py         ← FETCH ENVELOPE+SIZE+BODYSTRUCTURE, batched
@@ -95,6 +95,13 @@ Cancel: `_cancel_requested = True` flag checked between batches.
 `_parse_bodystructure` detects by `Content-Disposition: attachment` or filename+type heuristic.
 Audit header `X-MailSweep-Detached` added to stripped message.
 Path traversal sanitised in `_safe_filename`.
+Detached parts replaced with text/plain placeholder (original name, size, local path).
+
+### Gmail-Safe Delete
+Gmail's IMAP maps `\Deleted`+`EXPUNGE` on `[Gmail]/All Mail` to permanent deletion (bypasses Trash).
+Fix: `COPY` UIDs to `[Gmail]/Trash` before `\Deleted`+`EXPUNGE`. Applied to inline delete and backup worker.
+Detach worker doesn't need this — it APPENDs a replacement message, so the old one should be removed.
+`find_trash_folder()` in `connection.py` detects Trash across providers (Gmail, Outlook, Apple Mail, generic).
 
 ---
 
@@ -106,16 +113,38 @@ Path traversal sanitised in `_safe_filename`.
 | `run_local_server()` blocked Qt event loop on OAuth2 | Moved to `_OAuthWorker` on background `QThread` |
 | OAuth2 dialog gave no context on Client ID/Secret | Added inline help + links + App Password recommendation |
 | Rescan re-fetched all UIDs every time | Incremental scan: diff UIDs, fetch only delta |
+| Size sorting compared strings ("1.2 KB" > "3.4 MB") | Added sort role (UserRole+1) returning raw `size_bytes` int |
+| Gmail labels double-counted mailbox size (8 GB shown vs 4 GB actual) | SQL DISTINCT dedup + server IMAP QUOTA for real usage |
+| Treemap Messages view: click on message did nothing | Clear filters + `select_by_uid` + scroll to center |
+| Worker threads garbage collected before running | Store `_op_worker`/`_op_thread` as instance vars with cleanup |
+| Gmail delete permanently removed messages (bypassed Trash) | COPY to `[Gmail]/Trash` before `\Deleted`+`EXPUNGE` |
+| Detach didn't modify original email on server | Added `readonly=False` to `select_folder`, added logging |
+| Detached attachments left no trace in email | Replace with text/plain placeholder (filename, size, local path) |
+
+---
+
+## Post-Phase Enhancements (completed)
+
+| Feature | Details |
+|---------|---------|
+| **Treemap view modes** | Three modes: Folders, Senders, Messages — switchable via combo box |
+| **Treemap folder drill-down** | Click folder → shows sub-labels; click sub-label → shows messages; hierarchical navigation |
+| **Backup without delete** | "Backup…" button/menu saves .eml files without removing from server |
+| **Extract without detach** | "Extract Attachments…" saves attachments locally without modifying server message |
+| **Status bar quota display** | Shows "Google: X / Y (Z%) \| Mail: A (B msgs)" using IMAP QUOTA |
+| **Dedup folder sizes** | "All Folders" shows deduplicated total (Gmail labels don't inflate count) |
+| **Attachment placeholder** | Detached attachments replaced with text/plain showing original name, size, local path |
+| **Gmail-safe delete** | COPY to [Gmail]/Trash before EXPUNGE (prevents permanent deletion) |
+| **Organized save paths** | Attachments saved to `<label>/<uid>_<subject>/` matching backup folder structure |
 
 ---
 
 ## Known Gaps / Next Steps
 
 ### High priority
-- [ ] **Sender aggregation view** — group-by-sender sub-table showing total size per sender
-      (repo method `get_sender_summary()` exists, no UI widget yet)
-- [ ] **"Reload from Cache" on startup** — currently shows data immediately but the
-      folder tree size badges only populate after a scan; should derive sizes from DB on load
+- [x] ~~**Sender aggregation view**~~ — implemented as treemap "Senders" mode
+- [ ] **"Reload from Cache" on startup** — folder tree size badges only populate after scan;
+      should derive sizes from DB on load
 - [ ] **Error recovery on scan** — if a folder errors mid-scan, resume from next folder
       (partially done — errors are logged and scan continues to next folder)
 
@@ -170,6 +199,10 @@ uv run ruff check mailsweep/
 ## Git Log
 
 ```
+996e4da  fix: organize extracted attachments by label/subject like backup
+61b69e9  feat: treemap drill-down, view modes, dedup sizes, backup/extract without delete
+78b4c5c  feat: scan selected folder + auto-fetch folder list on account add/select
+26b75cf  fix: parse imapclient 3.x Envelope/Address objects (attribute access, not index)
 9eb8130  feat: incremental scan — only fetch new UIDs on rescan
 a5918ee  fix: OAuth2 browser flow on background thread, better UX in account dialog
 37fa29d  feat: phases 5-6 — OAuth2, incremental scan, settings, log dock, packaging

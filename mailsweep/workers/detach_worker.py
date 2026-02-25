@@ -73,7 +73,7 @@ class DetachWorker(QObject):
 
                 folder_name = self._folder_id_to_name.get(folder_id, str(folder_id))
                 try:
-                    client.select_folder(folder_name)
+                    client.select_folder(folder_name, readonly=False)
                 except Exception as exc:
                     self.error.emit(f"Cannot select {folder_name}: {exc}")
                     continue
@@ -110,12 +110,22 @@ class DetachWorker(QObject):
                         if self._detach_from_server:
                             # Replace message on server with stripped version
                             append_flags = [f for f in orig_flags if f not in (b"\\Recent",)]
-                            client.append(folder_name, cleaned_bytes, append_flags, orig_date)
+                            logger.info(
+                                "APPEND stripped message to %s (orig UID %d, %d→%d bytes)",
+                                folder_name, msg.uid, len(raw), len(cleaned_bytes),
+                            )
+                            append_result = client.append(
+                                folder_name, cleaned_bytes, append_flags, orig_date,
+                            )
+                            logger.info("APPEND result: %s", append_result)
                             client.set_flags([msg.uid], [b"\\Deleted"])
+                            logger.info("Marked UID %d as \\Deleted", msg.uid)
                             try:
                                 client.uid_expunge([msg.uid])
+                                logger.info("UID EXPUNGE %d done", msg.uid)
                             except Exception:
                                 client.expunge()
+                                logger.info("EXPUNGE (non-UID) done for folder %s", folder_name)
 
                         self.message_done.emit(msg, saved_names)
 

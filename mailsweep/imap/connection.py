@@ -98,3 +98,31 @@ def list_folders(client: IMAPClient) -> list[str]:
             name = name.decode("utf-8", errors="replace")
         folders.append(name)
     return sorted(folders)
+
+
+def find_trash_folder(folder_names: list[str] | dict) -> str | None:
+    """Find the Trash folder from a list of folder names or a folder_id→name map.
+
+    Checks common Trash folder names across providers:
+    - Gmail: [Gmail]/Trash
+    - Outlook: Deleted Items
+    - Generic: Trash
+    """
+    if isinstance(folder_names, dict):
+        names = list(folder_names.values())
+    else:
+        names = list(folder_names)
+
+    # Priority order: most specific first
+    candidates = [
+        "[Gmail]/Trash",
+        "[Gmail]/Bin",       # UK English Gmail
+        "Deleted Items",     # Outlook
+        "Trash",             # Generic IMAP
+        "Deleted Messages",  # Apple Mail
+    ]
+    name_set = {n.lower(): n for n in names}
+    for candidate in candidates:
+        if candidate.lower() in name_set:
+            return name_set[candidate.lower()]
+    return None

@@ -59,30 +59,22 @@ def _walk_and_strip(
     if not msg.is_multipart():
         if _is_attachment(msg):
             filename = _safe_filename(msg, uid, len(saved))
-            _save_part(msg, save_dir / filename)
+            dest = save_dir / filename
+            size = _save_part(msg, dest)
             saved.append(filename)
-            return True  # Signal caller to remove this part
+            # Replace with placeholder pointing to saved file
+            _replace_with_placeholder(msg, filename, dest, size)
+            return False  # Keep the part (now a placeholder), don't remove
         return False
 
-    # Multipart: recurse and collect surviving children
+    # Multipart: recurse children in-place (they become placeholders)
     payload = msg.get_payload()
     if not isinstance(payload, list):
         return False
 
-    survivors: list[EmailMessage] = []
     for child in payload:
         if isinstance(child, EmailMessage):
-            removed = _walk_and_strip(child, save_dir, uid, saved, depth + 1)
-            if not removed:
-                survivors.append(child)
-        else:
-            survivors.append(child)
-
-    msg.set_payload(survivors)
-
-    # If multipart/mixed reduced to single child, unwrap it
-    if content_type == "multipart/mixed" and len(survivors) == 1:
-        _unwrap_single_child(msg, survivors[0])
+            _walk_and_strip(child, save_dir, uid, saved, depth + 1)
 
     return False
 
@@ -100,15 +92,42 @@ def _is_attachment(part: EmailMessage) -> bool:
     return False
 
 
-def _save_part(part: EmailMessage, dest: Path) -> None:
-    """Decode and save a MIME part to dest."""
+def _save_part(part: EmailMessage, dest: Path) -> int:
+    """Decode and save a MIME part to dest. Returns size in bytes."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     payload = part.get_payload(decode=True)
     if payload is None:
         logger.warning("Empty payload for part, skipping save to %s", dest)
-        return
+        return 0
     dest.write_bytes(payload)
     logger.info("Saved attachment: %s (%d bytes)", dest, len(payload))
+    return len(payload)
+
+
+def _replace_with_placeholder(
+    part: EmailMessage, original_name: str, local_path: Path, size: int
+) -> None:
+    """Replace an attachment part's content with a text placeholder
+    that records the original filename, size, and local save path."""
+    from mailsweep.utils.size_fmt import human_size
+
+    placeholder = (
+        f"[Attachment detached by MailSweep]\n"
+        f"Original file: {original_name}\n"
+        f"Size: {human_size(size)}\n"
+        f"Saved to: {local_path}\n"
+    )
+
+    # Clear existing content headers
+    for hdr in ("Content-Transfer-Encoding", "Content-Disposition"):
+        if hdr in part:
+            del part[hdr]
+
+    # Replace Content-Type and payload
+    del part["Content-Type"]
+    part["Content-Type"] = f'text/plain; charset="utf-8"; name="{original_name}.txt"'
+    part["Content-Disposition"] = f'inline; filename="{original_name}.txt"'
+    part.set_payload(placeholder, charset="utf-8")
 
 
 def _safe_filename(part: EmailMessage, uid: int, idx: int) -> str:

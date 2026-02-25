@@ -802,8 +802,8 @@ class MainWindow(QMainWindow):
 
         reply = QMessageBox.warning(
             self, "Delete Messages",
-            f"Permanently delete {len(messages)} message(s) from the server?\n\n"
-            "This operation is IRREVERSIBLE.",
+            f"Move {len(messages)} message(s) to Trash?\n\n"
+            "Messages will go to [Gmail]/Trash and be purged after 30 days.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -812,9 +812,8 @@ class MainWindow(QMainWindow):
         assert self._current_account is not None
         self._progress_panel.set_running(f"Deleting {len(messages)} messages…")
 
-        # Simple in-thread delete (fast, no body fetch needed)
         from collections import defaultdict
-        from mailsweep.imap.connection import connect
+        from mailsweep.imap.connection import connect, find_trash_folder
 
         try:
             client = connect(self._current_account)
@@ -823,17 +822,26 @@ class MainWindow(QMainWindow):
                 by_folder[msg.folder_id].append(msg)
 
             folder_map = self._build_folder_name_map()
+            trash_folder = find_trash_folder(folder_map)
+
             for folder_id, folder_msgs in by_folder.items():
                 folder_name = folder_map.get(folder_id, "")
                 if not folder_name:
                     continue
-                client.select_folder(folder_name)
+                client.select_folder(folder_name, readonly=False)
                 uids = [m.uid for m in folder_msgs]
+
+                if trash_folder and folder_name != trash_folder:
+                    # Gmail-safe: COPY to Trash, then remove from this folder
+                    client.copy(uids, trash_folder)
+                    logger.info("Copied %d UIDs from %s to %s", len(uids), folder_name, trash_folder)
+
                 client.set_flags(uids, [b"\\Deleted"])
                 try:
                     client.uid_expunge(uids)
                 except Exception:
                     client.expunge()
+
                 self._msg_repo.delete_uids(folder_id, uids)
                 self._folder_repo.update_stats(folder_id)
 
@@ -842,6 +850,7 @@ class MainWindow(QMainWindow):
             self._reload_messages()
             self._refresh_folder_panel()
             self._refresh_treemap()
+            self._refresh_size_label()
         except Exception as exc:
             self._progress_panel.set_error(str(exc))
             logger.error("Delete error: %s", exc)

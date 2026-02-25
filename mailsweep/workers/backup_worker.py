@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from mailsweep.imap.connection import connect
+from mailsweep.imap.connection import connect, find_trash_folder
 from mailsweep.models.account import Account
 from mailsweep.models.message import Message
 
@@ -63,6 +63,9 @@ class BackupWorker(QObject):
         for msg in self._messages:
             by_folder[msg.folder_id].append(msg)
 
+        # Find Trash folder for Gmail-safe delete
+        trash_folder = find_trash_folder(self._folder_id_to_name) if self._delete_after else None
+
         try:
             for folder_id, folder_msgs in by_folder.items():
                 if self._cancel_requested:
@@ -72,7 +75,7 @@ class BackupWorker(QObject):
                 folder_safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in folder_name)
 
                 try:
-                    client.select_folder(folder_name)
+                    client.select_folder(folder_name, readonly=not self._delete_after)
                 except Exception as exc:
                     self.error.emit(f"Cannot select {folder_name}: {exc}")
                     continue
@@ -100,6 +103,10 @@ class BackupWorker(QObject):
                         dest.write_bytes(raw)
 
                         if self._delete_after:
+                            # Gmail-safe: COPY to Trash first, then expunge
+                            if trash_folder and folder_name != trash_folder:
+                                client.copy([msg.uid], trash_folder)
+                                logger.info("Copied UID %d to %s before delete", msg.uid, trash_folder)
                             client.set_flags([msg.uid], [b"\\Deleted"])
                             try:
                                 client.uid_expunge([msg.uid])
