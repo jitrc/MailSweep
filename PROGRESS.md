@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-25
-**Status:** All 7 phases implemented. App running. ~6,500 lines of Python. 85/85 tests passing. Published on GitHub. Version 0.4.0.
+**Status:** All 7 phases implemented. App running. ~6,500 lines of Python. 85/85 tests passing. Published on GitHub. Version 0.4.1.
 
 ---
 
