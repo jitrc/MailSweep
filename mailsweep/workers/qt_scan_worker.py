@@ -46,12 +46,14 @@ class QtScanWorker(QObject):
         folder_repo,
         msg_repo,
         parent: QObject | None = None,
+        force_full: bool = False,
     ) -> None:
         super().__init__(parent)
         self._account = account
         self._folders = folders
         self._folder_repo = folder_repo
         self._msg_repo = msg_repo
+        self._force_full = force_full
         self._cancel_requested = False
         self._current_worker: ScanWorker | None = None
 
@@ -85,12 +87,15 @@ class QtScanWorker(QObject):
                     continue
 
                 cache_valid = (
-                    folder.uid_validity != 0
+                    not self._force_full
+                    and folder.uid_validity != 0
                     and folder.uid_validity == server_uidvalidity
                 )
 
                 if not cache_valid:
-                    if folder.uid_validity and folder.uid_validity != server_uidvalidity:
+                    if self._force_full:
+                        logger.info("Force full rescan for %s", folder.name)
+                    elif folder.uid_validity and folder.uid_validity != server_uidvalidity:
                         logger.info("UID validity changed for %s — full rescan", folder.name)
                     else:
                         logger.info("No cache for %s — full scan", folder.name)

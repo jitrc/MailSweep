@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         actions_menu = menubar.addMenu("&Actions")
         actions_menu.addAction("Scan All Folders", self._on_scan)
         actions_menu.addAction("Scan Selected Folder", self._on_scan_selected)
+        actions_menu.addAction("Force Full Rescan", self._on_force_rescan)
         actions_menu.addSeparator()
         actions_menu.addAction("Extract Attachments…", self._on_extract_attachments)
         actions_menu.addAction("Detach Attachments…", self._on_detach)
@@ -725,7 +726,49 @@ class MainWindow(QMainWindow):
 
         self._start_scan(folders)
 
-    def _start_scan(self, folders: list[Folder]) -> None:
+    def _on_force_rescan(self) -> None:
+        """Force a full rescan of ALL folders (ignores cache, re-fetches everything)."""
+        if not self._current_account:
+            QMessageBox.information(self, "No Account", "Please add an account first.")
+            return
+        if self._scan_thread and self._scan_thread.isRunning():
+            QMessageBox.information(self, "Busy", "A scan is already in progress.")
+            return
+        reply = QMessageBox.question(
+            self, "Force Full Rescan",
+            "This will re-download metadata for ALL messages in ALL folders.\n"
+            "This may take a while. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        assert self._current_account.id is not None
+
+        from mailsweep.imap.connection import IMAPConnectionError, connect, list_folders
+        self._progress_panel.set_running("Connecting…")
+        self._scan_btn.setEnabled(False)
+
+        try:
+            client = connect(self._current_account)
+            folder_names = list_folders(client)
+            client.logout()
+        except IMAPConnectionError as exc:
+            self._progress_panel.set_error(str(exc))
+            self._scan_btn.setEnabled(True)
+            return
+
+        folders: list[Folder] = []
+        for name in folder_names:
+            f = self._folder_repo.get_by_name(self._current_account.id, name)
+            if not f:
+                f = Folder(account_id=self._current_account.id, name=name)
+                f = self._folder_repo.upsert(f)
+            folders.append(f)
+
+        self._refresh_folder_panel()
+        self._start_scan(folders, force_full=True)
+
+    def _start_scan(self, folders: list[Folder], force_full: bool = False) -> None:
         """Common scan launcher used by both Scan All and Scan Selected."""
         assert self._current_account is not None
         self._scan_btn.setEnabled(False)
@@ -736,6 +779,7 @@ class MainWindow(QMainWindow):
             folders=folders,
             folder_repo=self._folder_repo,
             msg_repo=self._msg_repo,
+            force_full=force_full,
         )
         thread = QThread(self)
         worker.moveToThread(thread)
