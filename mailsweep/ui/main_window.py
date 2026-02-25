@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDockWidget,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -129,6 +130,10 @@ class MainWindow(QMainWindow):
         self._delete_btn.clicked.connect(self._on_delete)
         tb.addWidget(self._delete_btn)
 
+        self._move_btn = QPushButton("Move to…")
+        self._move_btn.clicked.connect(self._on_move_to_folder)
+        tb.addWidget(self._move_btn)
+
     def _build_central_widget(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
@@ -157,6 +162,7 @@ class MainWindow(QMainWindow):
         self._msg_table.backup_requested.connect(self._on_backup_messages_only)
         self._msg_table.backup_delete_requested.connect(self._on_backup_messages)
         self._msg_table.delete_requested.connect(self._on_delete_messages)
+        self._msg_table.move_requested.connect(self._on_move_messages)
         self._msg_table.view_headers_requested.connect(self._on_view_headers)
         self._msg_table.show_to_toggled.connect(self._on_show_to_toggled)
         v_splitter.addWidget(self._msg_table)
@@ -824,7 +830,9 @@ class MainWindow(QMainWindow):
         self._scan_worker = None
         self._scan_thread = None
         self._reload_messages()
+        self._refresh_folder_panel()
         self._refresh_treemap()
+        self._refresh_size_label()
 
     def _on_scan_error(self, msg: str) -> None:
         self._progress_panel.set_error(msg)
@@ -1217,10 +1225,96 @@ class MainWindow(QMainWindow):
         self._refresh_treemap()
         self._refresh_size_label()
 
+    def _on_move_to_folder(self) -> None:
+        """Toolbar handler: move checked/selected messages to a chosen folder."""
+        messages = self._get_operation_messages()
+        if not messages:
+            QMessageBox.information(self, "No Selection", "Select messages first.")
+            return
+        self._on_move_messages(messages)
+
+    def _on_move_messages(self, messages: list[Message]) -> None:
+        """Show folder picker and move messages to chosen destination."""
+        if not messages or not self._current_account:
+            return
+
+        folder_map = self._build_folder_name_map()
+        if not folder_map:
+            QMessageBox.information(self, "No Folders", "No folders found for this account.")
+            return
+
+        # Exclude current folder(s) from choices
+        current_folders = set(self._current_folder_ids)
+        folder_names = sorted(
+            name for fid, name in folder_map.items()
+            if fid not in current_folders
+        )
+        if not folder_names:
+            QMessageBox.information(self, "No Folders", "No other folders to move to.")
+            return
+
+        dst_name, ok = QInputDialog.getItem(
+            self, "Move to…",
+            f"Move {len(messages)} message(s) to:",
+            folder_names, 0, False,
+        )
+        if not ok or not dst_name:
+            return
+
+        reply = QMessageBox.question(
+            self, "Confirm Move",
+            f"Move {len(messages)} message(s) to '{dst_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Build reverse map: folder_id → name (for source lookup)
+        from mailsweep.workers.move_worker import MoveOp, MoveWorker
+
+        ops: list[MoveOp] = []
+        for msg in messages:
+            src_name = folder_map.get(msg.folder_id, "")
+            if not src_name:
+                continue
+            ops.append(MoveOp(uid=msg.uid, src_folder=src_name, dst_folder=dst_name))
+
+        if not ops:
+            QMessageBox.information(self, "Nothing to Move", "Could not resolve source folders.")
+            return
+
+        worker = MoveWorker()
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        account = self._current_account
+        conn = self._conn
+        folder_repo = self._folder_repo
+        msg_repo = self._msg_repo
+
+        thread.started.connect(
+            lambda: worker.run(account, ops, conn, folder_repo, msg_repo)
+        )
+        worker.progress.connect(
+            lambda done, total, msg: self._progress_panel.set_progress(done, total, msg)
+        )
+        worker.error.connect(self._on_scan_error)
+        worker.finished.connect(self._on_move_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._move_thread = thread
+        self._move_worker = worker
+        self._progress_panel.set_running(f"Moving {len(ops)} messages…")
+        thread.start()
+
     def _on_settings(self) -> None:
         from mailsweep.ui.settings_dialog import SettingsDialog
         if SettingsDialog(self).exec() == QDialog.DialogCode.Accepted:
             self._ai_dock._load_from_config()
+            self._refresh_folder_panel()
+            self._reload_messages()
 
     def _update_status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 3000)

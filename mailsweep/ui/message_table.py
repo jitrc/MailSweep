@@ -209,6 +209,7 @@ class MessageTableView(QTableView):
     backup_requested = pyqtSignal(list)     # list[Message]
     backup_delete_requested = pyqtSignal(list)  # list[Message]
     delete_requested = pyqtSignal(list)     # list[Message]
+    move_requested = pyqtSignal(list)       # list[Message]
     view_headers_requested = pyqtSignal(object)  # Message
     show_to_toggled = pyqtSignal(bool)      # emitted on manual header toggle
 
@@ -289,6 +290,8 @@ class MessageTableView(QTableView):
         backup_del_act = menu.addAction(f"Backup && Delete ({n} msg(s))")
         delete_act = menu.addAction(f"Delete ({n} msg(s))")
         menu.addSeparator()
+        move_act = menu.addAction(f"Move to… ({n} msg(s))")
+        menu.addSeparator()
         headers_act = menu.addAction("View Headers…")
 
         extract_act.triggered.connect(lambda: self.extract_requested.emit(selected))
@@ -296,6 +299,7 @@ class MessageTableView(QTableView):
         backup_act.triggered.connect(lambda: self.backup_requested.emit(selected))
         backup_del_act.triggered.connect(lambda: self.backup_delete_requested.emit(selected))
         delete_act.triggered.connect(lambda: self.delete_requested.emit(selected))
+        move_act.triggered.connect(lambda: self.move_requested.emit(selected))
         headers_act.triggered.connect(
             lambda: self.view_headers_requested.emit(selected[0]) if selected else None
         )
