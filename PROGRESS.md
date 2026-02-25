@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-25
-**Status:** All 7 phases implemented. App running. ~6,400 lines of Python. 85/85 tests passing. Published on GitHub. Release v0.3.1.
+**Status:** All 7 phases implemented. App running. ~6,400 lines of Python. 85/85 tests passing. Published on GitHub. Version 0.3.2.
 
 ---
 
@@ -192,6 +192,13 @@ LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
 | **AI settings** | Provider/URL/model in settings dialog + keyring for API key |
 | **Move to… (manual)** | "Move to…" toolbar button + context menu action — folder picker dialog, reuses MoveWorker |
 | **Thread-aware unlabelled** | Three modes for unlabelled detection: message-id only, in-reply-to chain, Gmail thread ID |
+| **Find Detached Duplicates** | Detect Thunderbird-style detach leftovers (original + stripped copy in same folder) |
+| **Find Duplicate Labels** | Find messages appearing in 2+ IMAP folders (cross-label duplicates), skip All Mail option |
+| **Toolbar theme icons** | System theme icons on all toolbar buttons; App Password help shown when host is blank |
+| **AI sender-based moves** | AI MOVE suggestions use `sender=` format (not UID); resolved to concrete UIDs at apply time |
+| **App icon** | SVG icon (envelope + treemap blocks + sparkles); set on QApplication, bundled in PyInstaller spec |
+| **Screenshots in README** | 8 screenshots added: treemap views, unlabelled, AI suggestions, account settings, settings |
+| **Author metadata** | Author name in pyproject.toml, README, and About dialog |
 
 ---
 
@@ -272,6 +279,16 @@ Outlook token refresh fix, README/LICENSE/.gitignore added, pyproject.toml metad
 ## Git Log
 
 ```
+9fc48cb  feat: add app icon (envelope with treemap blocks and sparkles)
+7f410b1  docs: add screenshots to README
+d8d9ee1  docs: add author to pyproject.toml
+f56aadc  docs: add author name to README and About dialog
+1a7ae25  fix: change AI move suggestions from UID-based to sender-based format
+023e852  feat: add theme icons to toolbar and show App Password help for blank host
+067e359  feat: add Find Duplicate Labels action and show Gmail App Password help in password mode
+cf2ad0c  feat: add Find Detached Duplicates action to detect Thunderbird detach leftovers
+872c333  fix: bundle certifi CA certs for SSL in PyInstaller builds
+8073172  fix: build macOS .app bundle instead of bare executable
 b04403a  fix: strip leading whitespace from AppImage desktop file
 0164f9a  fix: stop treating dots as folder hierarchy separators
 4b1c44e  feat: add "Move to…" for messages + fix stale folder panel after settings/scan

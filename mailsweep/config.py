@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 APP_NAME = "MailSweep"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.2"
 
 logger = logging.getLogger(__name__)
 
