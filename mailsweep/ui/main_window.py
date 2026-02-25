@@ -1044,10 +1044,7 @@ class MainWindow(QMainWindow):
         self._run_worker(worker, f"Deleting {len(messages)} messages…", updates_cache=True)
 
     def _on_remove_label(self, messages: list[Message]) -> None:
-        """Remove messages from their current folders without Trash copy.
-
-        Used after Find Duplicate Labels — the message still exists in other folders.
-        """
+        """Show label picker, then expunge selected labels (no Trash copy)."""
         if not messages:
             QMessageBox.information(self, "No Selection", "Select messages first.")
             return
@@ -1055,31 +1052,78 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Account", "No account selected.")
             return
 
-        folder_map = self._build_folder_name_map()
-        # Build summary of which folders will be affected
-        from collections import Counter
-        folder_counts = Counter(folder_map.get(m.folder_id, "?") for m in messages)
-        detail = "\n".join(f"  {name}: {cnt} msg(s)" for name, cnt in folder_counts.most_common())
+        # Collect all copies of all selected messages across folders
+        seen_ids: set[tuple[int, int]] = set()  # (folder_id, uid) already queued
+        all_copies: dict[str, list[Message]] = {}  # folder_name → [Message copies]
+        for msg in messages:
+            copies = self._msg_repo.get_message_copies(msg)
+            for copy in copies:
+                key = (copy.folder_id, copy.uid)
+                if key not in seen_ids:
+                    seen_ids.add(key)
+                    all_copies.setdefault(copy.folder_name, []).append(copy)
 
-        reply = QMessageBox.warning(
-            self, "Remove Label",
-            f"Remove {len(messages)} message(s) from their current folders?\n\n"
-            f"{detail}\n\n"
-            "Messages will remain in other folders they belong to.\n"
-            "This does NOT move them to Trash.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if len(all_copies) < 2:
+            QMessageBox.information(
+                self, "Remove Label",
+                "Message only exists in one folder — nothing to remove.",
+            )
             return
 
+        # Show label picker dialog
+        from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Remove Labels")
+        dlg.setMinimumWidth(350)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(
+            f"This message exists in {len(all_copies)} folders.\n"
+            "Check the labels to REMOVE (at least one must remain):"
+        ))
+
+        checkboxes: list[tuple[QCheckBox, str]] = []
+        for folder_name in sorted(all_copies.keys()):
+            count = len(all_copies[folder_name])
+            label = f"{folder_name} ({count} msg(s))" if count > 1 else folder_name
+            cb = QCheckBox(label)
+            layout.addWidget(cb)
+            checkboxes.append((cb, folder_name))
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(dlg.accept)
+        btn_box.rejected.connect(dlg.reject)
+        layout.addWidget(btn_box)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Gather messages to remove
+        selected_folders = [name for cb, name in checkboxes if cb.isChecked()]
+        if not selected_folders:
+            return
+        if len(selected_folders) == len(all_copies):
+            QMessageBox.warning(
+                self, "Remove Label",
+                "Cannot remove ALL labels — at least one must remain.",
+            )
+            return
+
+        to_remove: list[Message] = []
+        for folder_name in selected_folders:
+            to_remove.extend(all_copies[folder_name])
+
+        folder_map = self._build_folder_name_map()
         from mailsweep.workers.remove_label_worker import RemoveLabelWorker
 
         worker = RemoveLabelWorker(
             account=self._current_account,
-            messages=messages,
+            messages=to_remove,
             folder_id_to_name=folder_map,
         )
-        self._run_worker(worker, f"Removing {len(messages)} label(s)…", updates_cache=True)
+        self._run_worker(worker, f"Removing {len(to_remove)} label(s)…", updates_cache=True)
 
     def _run_worker(
         self, worker, status_msg: str, *,

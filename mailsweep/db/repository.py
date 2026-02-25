@@ -898,3 +898,40 @@ class MessageRepository:
             names.update(r["name"] for r in thread_rows)
 
         return sorted(names)
+
+    def get_message_copies(self, msg: Message) -> list[Message]:
+        """Return all copies of a message across folders (uid, folder_id, folder_name).
+
+        Uses message_id for matching when available; falls back to identity tuple.
+        """
+        if msg.message_id:
+            rows = self._conn.execute(
+                """
+                SELECT m.*, f.name AS folder_name
+                FROM messages m
+                JOIN folders f ON f.id = m.folder_id
+                WHERE m.message_id = ?
+                ORDER BY f.name
+                """,
+                (msg.message_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT m.*, f.name AS folder_name
+                FROM messages m
+                JOIN folders f ON f.id = m.folder_id
+                WHERE m.from_addr IS ?
+                  AND m.subject   IS ?
+                  AND m.date      IS ?
+                  AND m.size_bytes = ?
+                ORDER BY f.name
+                """,
+                (
+                    msg.from_addr,
+                    msg.subject,
+                    msg.date.isoformat() if msg.date else None,
+                    msg.size_bytes,
+                ),
+            ).fetchall()
+        return [Message.from_row(dict(r)) for r in rows]
