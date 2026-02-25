@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self._build_central_widget()
         self._build_status_bar()
         self._build_menu()
+        self._build_log_dock()
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
@@ -156,6 +157,9 @@ class MainWindow(QMainWindow):
 
         view_menu = menubar.addMenu("&View")
         view_menu.addAction("Reload from Cache", self._on_reload_cache)
+        view_menu.addAction("Settings…", self._on_settings)
+        view_menu.addSeparator()
+        view_menu.addAction("Show Log", self._show_log_dock)
 
         actions_menu = menubar.addMenu("&Actions")
         actions_menu.addAction("Scan Mailbox", self._on_scan)
@@ -559,6 +563,19 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(text)
         dlg.exec()
+
+    def _build_log_dock(self) -> None:
+        from mailsweep.ui.log_dock import LogDockWidget
+        self._log_dock = LogDockWidget(self)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._log_dock)
+        self._log_dock.hide()
+
+    def _show_log_dock(self) -> None:
+        self._log_dock.show()
+
+    def _on_settings(self) -> None:
+        from mailsweep.ui.settings_dialog import SettingsDialog
+        SettingsDialog(self).exec()
 
     def _update_status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 3000)
