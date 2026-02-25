@@ -42,8 +42,10 @@ class FolderPanel(QTreeWidget):
         self.addTopLevelItem(all_item)
 
     def populate(self, folders: list[Folder]) -> None:
-        """Rebuild the tree from a flat list of folders."""
-        # Keep the "All Folders" sentinel
+        """Rebuild the tree from a flat list of folders.
+
+        Ordering: INBOX first, then [Gmail]/* group, then everything else alpha-sorted.
+        """
         self.clear()
         self._add_all_item()
 
@@ -52,11 +54,25 @@ class FolderPanel(QTreeWidget):
         if all_item:
             all_item.setText(1, human_size(total_size))
 
-        # Build nested tree from folder paths
-        # Folders may be separated by "/" or "."
+        # Partition into 3 buckets
+        inbox: list[Folder] = []
+        gmail: list[Folder] = []
+        rest: list[Folder] = []
+
+        for f in folders:
+            name_lower = f.name.lower()
+            if name_lower == "inbox":
+                inbox.append(f)
+            elif name_lower.startswith("[gmail]") or name_lower.startswith("[google mail]"):
+                gmail.append(f)
+            else:
+                rest.append(f)
+
+        ordered = inbox + sorted(gmail, key=lambda f: f.name) + sorted(rest, key=lambda f: f.name)
+
         items_by_path: dict[str, QTreeWidgetItem] = {}
 
-        for folder in sorted(folders, key=lambda f: f.name):
+        for folder in ordered:
             parts = folder.name.replace(".", "/").split("/")
             parent_item: QTreeWidgetItem | QTreeWidget = self
 
@@ -69,6 +85,11 @@ class FolderPanel(QTreeWidget):
                 is_leaf = depth == len(parts) - 1
                 item = QTreeWidgetItem([part, human_size(folder.total_size_bytes) if is_leaf else ""])
                 item.setData(0, FOLDER_ID_ROLE, folder.id if is_leaf else None)
+
+                if is_leaf:
+                    font = item.font(0)
+                    font.setBold(folder.name.lower() == "inbox")
+                    item.setFont(0, font)
 
                 if isinstance(parent_item, QTreeWidget):
                     parent_item.addTopLevelItem(item)

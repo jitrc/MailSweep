@@ -21,16 +21,44 @@ def make_mock_client(uid_map: dict) -> MagicMock:
     return client
 
 
+class _MockAddress:
+    """Mimics imapclient.response_types.Address (attribute-based)."""
+    def __init__(self, name, route, mailbox, host):
+        self.name = name
+        self.route = route
+        self.mailbox = mailbox
+        self.host = host
+
+
+class _MockEnvelope:
+    """Mimics imapclient.response_types.Envelope (attribute-based)."""
+    def __init__(self, date, subject, from_, sender=None, reply_to=None,
+                 to=None, cc=None, bcc=None, in_reply_to=None, message_id=None):
+        self.date = date
+        self.subject = subject
+        self.from_ = from_
+        self.sender = sender
+        self.reply_to = reply_to
+        self.to = to
+        self.cc = cc
+        self.bcc = bcc
+        self.in_reply_to = in_reply_to
+        self.message_id = message_id
+
+
 def make_envelope(
-    date: bytes = b"Mon, 01 Jan 2024 12:00:00 +0000",
+    date=None,
     subject: bytes = b"Test Subject",
     from_name: bytes = b"Alice",
     from_mbox: bytes = b"alice",
     from_host: bytes = b"example.com",
 ):
-    """Build a minimal IMAP ENVELOPE tuple."""
-    addr = (from_name, None, from_mbox, from_host)
-    return (date, subject, [addr], [addr], [addr], None, None, None, None, None)
+    """Build a mock Envelope matching imapclient 3.x API."""
+    from datetime import datetime, timezone
+    if date is None:
+        date = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    addr = _MockAddress(from_name, None, from_mbox, from_host)
+    return _MockEnvelope(date=date, subject=subject, from_=(addr,))
 
 
 class TestScanWorker:
@@ -192,7 +220,13 @@ class TestParseDate:
 
 
 class TestEnvelopeAddr:
-    def test_full_address(self):
+    def test_full_address_object(self):
+        addr_list = (_MockAddress(b"Alice Smith", None, b"alice", b"example.com"),)
+        result = _envelope_addr(addr_list)
+        assert "alice@example.com" in result
+        assert "Alice" in result
+
+    def test_full_address_tuple(self):
         addr_list = [(b"Alice Smith", None, b"alice", b"example.com")]
         result = _envelope_addr(addr_list)
         assert "alice@example.com" in result

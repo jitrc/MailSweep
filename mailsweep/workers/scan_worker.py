@@ -101,9 +101,22 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
         bodystructure = data.get(b"BODYSTRUCTURE")
         flags = [f.decode() if isinstance(f, bytes) else str(f) for f in data.get(b"FLAGS", [])]
 
-        from_addr = _envelope_addr(envelope[2] if envelope else None)
-        subject = _decode_header(envelope[1] if envelope else b"")
-        date = _parse_date(envelope[0] if envelope else None)
+        # imapclient 3.x returns an Envelope object with named attributes:
+        #   .date (datetime|None), .subject (bytes), .from_ (tuple[Address]|None)
+        # Address has: .name (bytes), .route, .mailbox (bytes), .host (bytes)
+        if envelope is not None:
+            from_addr = _envelope_addr(getattr(envelope, "from_", None))
+            subject = _decode_header(getattr(envelope, "subject", b""))
+            raw_date = getattr(envelope, "date", None)
+            # .date is already a datetime in imapclient 3.x
+            if isinstance(raw_date, datetime):
+                date = raw_date
+            else:
+                date = _parse_date(raw_date)
+        else:
+            from_addr = ""
+            subject = ""
+            date = None
 
         has_attachment, attachment_names = _parse_bodystructure(bodystructure)
 
@@ -124,14 +137,23 @@ def _parse_fetch_response(uid: int, folder_id: int, data: dict) -> Message | Non
 
 
 def _envelope_addr(addr_list: Any) -> str:
-    """Extract 'Name <email>' string from IMAP ENVELOPE address list."""
+    """Extract 'Name <email>' from an ENVELOPE address list.
+
+    imapclient 3.x: addr_list is tuple[Address, ...] or None.
+    Address has .name, .mailbox, .host (all bytes or None).
+    """
     if not addr_list:
         return ""
     try:
         addr = addr_list[0]
-        name = _decode_header(addr[0]) if addr[0] else ""
-        mailbox = addr[2].decode() if isinstance(addr[2], bytes) else (addr[2] or "")
-        host = addr[3].decode() if isinstance(addr[3], bytes) else (addr[3] or "")
+        # Support both attribute access (imapclient 3.x Address) and index access (raw tuple)
+        name_raw = getattr(addr, "name", None) or (addr[0] if not hasattr(addr, "name") else None)
+        mbox_raw = getattr(addr, "mailbox", None) or (addr[2] if not hasattr(addr, "mailbox") else None)
+        host_raw = getattr(addr, "host", None) or (addr[3] if not hasattr(addr, "host") else None)
+
+        name = _decode_header(name_raw) if name_raw else ""
+        mailbox = mbox_raw.decode() if isinstance(mbox_raw, bytes) else (mbox_raw or "")
+        host = host_raw.decode() if isinstance(host_raw, bytes) else (host_raw or "")
         email_addr = f"{mailbox}@{host}" if mailbox and host else ""
         if name and email_addr:
             return f"{name} <{email_addr}>"
