@@ -444,9 +444,10 @@ wheels = [
 
 [[package]]
 name = "mailsweep"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "chardet" },
     { name = "google-auth" },
     { name = "google-auth-oauthlib" },
@@ -467,6 +468,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2024.0.0" },
     { name = "chardet", specifier = ">=5.2.0" },
     { name = "google-auth", specifier = ">=2.27.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.2.0" },

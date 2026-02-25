@@ -2,11 +2,15 @@
 """PyInstaller spec for MailSweep (onefile mode, .app bundle on macOS)."""
 import sys
 
+import certifi
+
 a = Analysis(
     ['mailsweep/main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[],
+    datas=[
+        (certifi.where(), 'certifi'),
+    ],
     hiddenimports=[
         'imapclient',
         'squarify',
@@ -19,13 +23,14 @@ a = Analysis(
         'google_auth_oauthlib.flow',
         'msal',
         'chardet',
+        'certifi',
         'PyQt6.QtWidgets',
         'PyQt6.QtCore',
         'PyQt6.QtGui',
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['rthook_certifi.py'],
     excludes=[],
     noarchive=False,
 )
