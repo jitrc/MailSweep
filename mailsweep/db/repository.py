@@ -756,6 +756,95 @@ class MessageRepository:
         total_bytes = sum(m.size_bytes for m in originals)
         return messages, len(originals), total_bytes
 
+    def find_cross_label_duplicates(
+        self,
+        account_id: int,
+        skip_folder_ids: list[int] | None = None,
+    ) -> tuple[list[Message], int, int]:
+        """Find messages that appear in 2+ folders (cross-label duplicates).
+
+        Returns (messages, group_count, total_duplicate_bytes) where
+        duplicate bytes = sum of all copies minus one per group.
+        """
+        skip_clause = ""
+        params: list[Any] = [account_id]
+        if skip_folder_ids:
+            placeholders = ",".join("?" * len(skip_folder_ids))
+            skip_clause = f"AND f.id NOT IN ({placeholders})"
+            params.extend(skip_folder_ids)
+
+        # Messages WITH message_id: group by message_id
+        # Messages WITHOUT message_id: group by identity tuple
+        sql = f"""
+            WITH eligible AS (
+                SELECT m.*, f.name AS folder_name
+                FROM messages m
+                JOIN folders f ON f.id = m.folder_id
+                WHERE f.account_id = ? {skip_clause}
+            ),
+            -- Groups with message_id
+            mid_groups AS (
+                SELECT message_id AS grp_key,
+                       COUNT(DISTINCT folder_id) AS folder_cnt,
+                       MAX(size_bytes) AS max_size
+                FROM eligible
+                WHERE message_id != ''
+                GROUP BY message_id
+                HAVING COUNT(DISTINCT folder_id) >= 2
+            ),
+            -- Groups without message_id (identity tuple)
+            ident_groups AS (
+                SELECT from_addr || '|' || subject || '|' || date || '|' || size_bytes AS grp_key,
+                       COUNT(DISTINCT folder_id) AS folder_cnt,
+                       MAX(size_bytes) AS max_size
+                FROM eligible
+                WHERE message_id = ''
+                GROUP BY from_addr, subject, date, size_bytes
+                HAVING COUNT(DISTINCT folder_id) >= 2
+            ),
+            -- All matching messages with their group info
+            tagged_mid AS (
+                SELECT e.*, g.folder_cnt,
+                       e.message_id AS grp_key
+                FROM eligible e
+                JOIN mid_groups g ON g.grp_key = e.message_id
+            ),
+            tagged_ident AS (
+                SELECT e.*, g.folder_cnt,
+                       e.from_addr || '|' || e.subject || '|' || e.date || '|' || e.size_bytes AS grp_key
+                FROM eligible e
+                JOIN ident_groups g ON g.grp_key = (e.from_addr || '|' || e.subject || '|' || e.date || '|' || e.size_bytes)
+                WHERE e.message_id = ''
+            ),
+            combined AS (
+                SELECT * FROM tagged_mid
+                UNION ALL
+                SELECT * FROM tagged_ident
+            )
+            SELECT * FROM combined
+            ORDER BY size_bytes DESC, grp_key, folder_name
+        """
+        rows = self._conn.execute(sql, params).fetchall()
+
+        messages: list[Message] = []
+        group_sizes: dict[str, list[int]] = {}
+        for r in rows:
+            row_dict = dict(r)
+            folder_cnt = row_dict.pop("folder_cnt")
+            grp_key = row_dict.pop("grp_key")
+            msg = Message.from_row(row_dict)
+            msg.tag = f"{folder_cnt} labels"
+            messages.append(msg)
+            group_sizes.setdefault(grp_key, []).append(msg.size_bytes)
+
+        group_count = len(group_sizes)
+        # Duplicate bytes = total of all copies minus one (the smallest) per group
+        total_duplicate_bytes = 0
+        for sizes in group_sizes.values():
+            total_duplicate_bytes += sum(sizes) - min(sizes)
+
+        return messages, group_count, total_duplicate_bytes
+
     def get_folders_for_message(self, msg: Message, include_thread: bool = False) -> list[str]:
         """Return all folder names containing the same physical message.
 

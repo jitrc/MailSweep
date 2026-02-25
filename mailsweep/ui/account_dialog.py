@@ -37,6 +37,13 @@ _GMAIL_HELP = """\
 3. Create an <i>OAuth 2.0 Client ID</i> (Desktop app type)<br>
 4. Copy the Client ID and Client Secret below."""
 
+_GMAIL_APP_PASSWORD_HELP = """\
+<b>Gmail requires an App Password</b> (not your normal Google password).<br><br>
+1. Enable <a href="https://myaccount.google.com/signinoptions/two-step-verification">2-Step Verification</a>
+   on your Google account<br>
+2. Go to <a href="https://myaccount.google.com/apppasswords">App Passwords</a><br>
+3. Create one for "Mail" and paste the 16-character password above."""
+
 _OUTLOOK_HELP = """\
 <b>Outlook OAuth2 requires an Azure App Registration.</b><br><br>
 1. Go to <a href="https://portal.azure.com/">Azure Portal</a> →
@@ -107,6 +114,7 @@ class AccountDialog(QDialog):
 
         self._host = QLineEdit()
         self._host.setPlaceholderText("imap.gmail.com")
+        self._host.textChanged.connect(lambda: self._on_auth_type_changed())
         form.addRow("IMAP Host:", self._host)
 
         self._port = QSpinBox()
@@ -192,6 +200,9 @@ class AccountDialog(QDialog):
             self._auth_type.setCurrentIndex(idx)
         self._use_ssl.setChecked(account.use_ssl)
 
+    def _is_gmail_host(self) -> bool:
+        return "gmail" in self._host.text().lower()
+
     def _on_auth_type_changed(self) -> None:
         auth_type = self._auth_type.currentData()
         is_password = auth_type == AuthType.PASSWORD
@@ -202,8 +213,14 @@ class AccountDialog(QDialog):
         self._password_label.setVisible(is_password)
         self._password.setVisible(is_password)
 
-        self._help_label.setVisible(is_oauth)
-        self._help_label.setText(_GMAIL_HELP if is_gmail else _OUTLOOK_HELP)
+        if is_oauth:
+            self._help_label.setVisible(True)
+            self._help_label.setText(_GMAIL_HELP if is_gmail else _OUTLOOK_HELP)
+        elif is_password and self._is_gmail_host():
+            self._help_label.setVisible(True)
+            self._help_label.setText(_GMAIL_APP_PASSWORD_HELP)
+        else:
+            self._help_label.setVisible(False)
 
         self._client_id_label.setVisible(is_oauth)
         self._client_id_edit.setVisible(is_oauth)

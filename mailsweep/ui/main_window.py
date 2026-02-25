@@ -74,6 +74,7 @@ class MainWindow(QMainWindow):
         self._op_needs_rescan = False
         self._op_updates_cache = False
         self._is_closing = False
+        self._special_view: callable | None = None  # re-run after delete/move
         self._folder_show_to: dict[tuple[int, ...], bool] = {}  # folder_ids → show_to
 
         self._build_ui()
@@ -223,6 +224,7 @@ class MainWindow(QMainWindow):
         actions_menu.addAction("Delete Selected…", self._on_delete)
         actions_menu.addSeparator()
         actions_menu.addAction("Find Detached Duplicates\u2026", self._on_find_detached)
+        actions_menu.addAction("Find Duplicate Labels\u2026", self._on_find_duplicate_labels)
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction("About MailSweep", self._on_about)
@@ -325,6 +327,7 @@ class MainWindow(QMainWindow):
 
     def _on_folder_selected(self, folder_ids: list[int]) -> None:
         self._current_folder_ids = folder_ids
+        self._special_view = None
         self._update_correspondent_column()
         self._reload_messages()
         self._refresh_treemap()
@@ -1098,7 +1101,10 @@ class MainWindow(QMainWindow):
                 self._start_scan(folders)
                 return  # _on_scan_all_done will refresh UI
 
-        self._reload_messages()
+        if self._special_view:
+            self._special_view()
+        else:
+            self._reload_messages()
         self._refresh_folder_panel()
         self._refresh_treemap()
         self._refresh_size_label()
@@ -1111,23 +1117,83 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Account", "Select an account first.")
             return
 
-        messages, orig_count, total_bytes = self._msg_repo.find_detached_originals(
-            self._current_account.id,
-        )
-        if not messages:
+        account_id = self._current_account.id
+
+        def _show() -> None:
+            messages, orig_count, total_bytes = self._msg_repo.find_detached_originals(
+                account_id,
+            )
+            self._msg_table.set_messages(messages)
+            self._msg_table.set_show_role(True)
+            if messages:
+                size_str = human_size(total_bytes)
+                self._update_status(
+                    f"Found {orig_count} detached originals ({size_str})"
+                    " \u2014 select and delete to reclaim space"
+                )
+            else:
+                self._update_status("No detached duplicates remaining")
+
+        _show()
+        if not self._msg_table.model().rowCount():
+            self._special_view = None
             QMessageBox.information(
                 self, "Detached Duplicates",
                 "No detached duplicates found.",
             )
             return
+        self._special_view = _show
 
-        self._msg_table.set_messages(messages)
-        self._msg_table.set_show_role(True)
-        size_str = human_size(total_bytes)
-        self._update_status(
-            f"Found {orig_count} detached originals ({size_str})"
-            " \u2014 select and delete to reclaim space"
-        )
+    # ── Find Duplicate Labels ────────────────────────────────────────────────
+
+    def _on_find_duplicate_labels(self) -> None:
+        """Find messages that appear in 2+ IMAP folders (cross-label duplicates)."""
+        if not self._current_account or not self._current_account.id:
+            QMessageBox.warning(self, "No Account", "Select an account first.")
+            return
+
+        account_id = self._current_account.id
+        skip_ids: list[int] = []
+
+        all_mail = self._folder_repo.find_all_mail_folder(account_id)
+        if all_mail and all_mail.id is not None:
+            answer = QMessageBox.question(
+                self, "Skip All Mail?",
+                f"Skip \"{all_mail.name}\"?\n\n"
+                "It contains copies of all messages and would cause "
+                "every labelled message to appear as a duplicate.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                skip_ids.append(all_mail.id)
+
+        skip_arg = skip_ids or None
+
+        def _show() -> None:
+            messages, group_count, dup_bytes = self._msg_repo.find_cross_label_duplicates(
+                account_id, skip_folder_ids=skip_arg,
+            )
+            self._msg_table.set_messages(messages)
+            self._msg_table.set_show_role(True)
+            if messages:
+                size_str = human_size(dup_bytes)
+                self._update_status(
+                    f"Found {len(messages)} messages in {group_count} duplicate groups ({size_str} duplicate)"
+                    " \u2014 select extras and delete"
+                )
+            else:
+                self._update_status("No cross-label duplicates remaining")
+
+        _show()
+        if not self._msg_table.model().rowCount():
+            self._special_view = None
+            QMessageBox.information(
+                self, "Duplicate Labels",
+                "No cross-label duplicates found.",
+            )
+            return
+        self._special_view = _show
 
     # ── View Headers ──────────────────────────────────────────────────────────
 
@@ -1249,7 +1315,10 @@ class MainWindow(QMainWindow):
         self._progress_panel.set_done(f"Moved {count} message(s)")
         self._move_thread = None
         self._move_worker = None
-        self._reload_messages()
+        if self._special_view:
+            self._special_view()
+        else:
+            self._reload_messages()
         self._refresh_folder_panel()
         self._refresh_treemap()
         self._refresh_size_label()
