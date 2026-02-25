@@ -49,13 +49,17 @@ class ScanWorker:
     def cancel(self) -> None:
         self._cancel_requested = True
 
-    def run(self) -> list[Message]:
+    def run(self, uids: list[int] | None = None) -> list[Message]:
         """
-        Scan the folder.  Returns all fetched Message objects.
-        Raises on connection error.
+        Scan the folder.  If *uids* is given, fetch only those UIDs (incremental).
+        Otherwise fetch all non-deleted UIDs (full scan).
+        Returns fetched Message objects.  Raises on connection error.
         """
         self._client.select_folder(self._folder_name, readonly=True)
-        all_uids: list[int] = self._client.search(["NOT", "DELETED"])
+        if uids is not None:
+            all_uids = uids
+        else:
+            all_uids = self._client.search(["NOT", "DELETED"])
         total = len(all_uids)
         logger.info("Scanning %s: %d messages", self._folder_name, total)
 

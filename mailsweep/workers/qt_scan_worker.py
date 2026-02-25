@@ -10,6 +10,7 @@ from mailsweep.imap.connection import IMAPConnectionError, connect
 from mailsweep.models.account import Account
 from mailsweep.models.folder import Folder
 from mailsweep.models.message import Message
+from mailsweep.workers.incremental_scan import get_new_deleted_uids
 from mailsweep.workers.scan_worker import ScanWorker
 
 logger = logging.getLogger(__name__)
@@ -83,27 +84,47 @@ class QtScanWorker(QObject):
                     logger.warning("Cannot select %s: %s", folder.name, exc)
                     continue
 
-                if folder.uid_validity and folder.uid_validity != server_uidvalidity:
-                    logger.info("UID validity changed for %s — invalidating cache", folder.name)
+                cache_valid = (
+                    folder.uid_validity != 0
+                    and folder.uid_validity == server_uidvalidity
+                )
+
+                if not cache_valid:
+                    if folder.uid_validity and folder.uid_validity != server_uidvalidity:
+                        logger.info("UID validity changed for %s — full rescan", folder.name)
+                    else:
+                        logger.info("No cache for %s — full scan", folder.name)
                     self._folder_repo.invalidate(folder.id)
+                    new_uids = None       # None → ScanWorker fetches all
+                    deleted_uids: list[int] = []
+                else:
+                    # Incremental: only fetch UIDs the server has that we don't,
+                    # and remove UIDs we have that the server deleted.
+                    new_uids, deleted_uids = get_new_deleted_uids(
+                        client, folder.id, self._msg_repo
+                    )
+                    if deleted_uids:
+                        self._msg_repo.delete_uids(folder.id, deleted_uids)
+                        logger.info("%s: removed %d deleted UIDs from cache",
+                                    folder.name, len(deleted_uids))
 
-                def on_batch(msgs: list[Message], _fid=folder.id) -> None:
-                    self._msg_repo.upsert_batch(msgs)
-                    # Signal is emitted with partial progress — progress updated in on_progress
-                    pass
+                    if not new_uids:
+                        logger.info("%s: cache up to date, skipping fetch", folder.name)
+                        # Still emit folder_done so UI stays current
+                        self._folder_repo.update_stats(folder.id)
+                        updated = self._folder_repo.get_by_id(folder.id)
+                        if updated:
+                            self.folder_done.emit(updated)
+                        continue
 
-                progress_state: dict[str, int] = {"done": 0, "total": 0}
+                    logger.info("%s: incremental — fetching %d new UIDs", folder.name, len(new_uids))
 
-                def on_progress(done: int, total: int, _fname=folder.name) -> None:
-                    progress_state["done"] = done
-                    progress_state["total"] = total
-                    # Emit with empty batch (progress only)
-                    self.message_batch_done.emit([], done, total)
-
-                # Wrap on_batch to also emit signal
                 def on_batch_emit(msgs: list[Message], _fid=folder.id) -> None:
                     self._msg_repo.upsert_batch(msgs)
                     self.message_batch_done.emit(msgs, 0, 0)
+
+                def on_progress(done: int, total: int, _fname=folder.name) -> None:
+                    self.message_batch_done.emit([], done, total)
 
                 worker = ScanWorker(
                     client=client,
@@ -115,7 +136,7 @@ class QtScanWorker(QObject):
                 self._current_worker = worker
 
                 try:
-                    worker.run()
+                    worker.run(uids=new_uids)
                 except Exception as exc:
                     logger.error("Scan error for %s: %s", folder.name, exc)
                     self.error.emit(f"Error scanning {folder.name}: {exc}")
