@@ -24,8 +24,9 @@ class Message:
     flags: list[str] = field(default_factory=list)
     cached_at: datetime | None = None
 
-    # Transient field for display — populated by joins
+    # Transient fields for display — populated by joins / special queries
     folder_name: str = ""
+    tag: str = ""
 
     @property
     def attachment_names_json(self) -> str:

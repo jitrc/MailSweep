@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 from mailsweep.models.message import Message
 from mailsweep.utils.size_fmt import human_size
 
-COLUMNS = ["", "From", "Subject", "Date", "Size", "Folder", "Attachments"]
+COLUMNS = ["", "From", "Subject", "Date", "Size", "Folder", "Attachments", "Role"]
 COL_CHECK = 0
 COL_CORRESPONDENT = 1
 COL_SUBJECT = 2
@@ -28,6 +28,7 @@ COL_DATE = 3
 COL_SIZE = 4
 COL_FOLDER = 5
 COL_ATTACHMENTS = 6
+COL_ROLE = 7
 
 
 class MessageTableModel(QAbstractTableModel):
@@ -86,6 +87,17 @@ class MessageTableModel(QAbstractTableModel):
                 return QColor(200, 50, 50)
             if size > 1_000_000:
                 return QColor(200, 130, 30)
+
+        if role == Qt.ItemDataRole.ForegroundRole and col == COL_ROLE:
+            if msg.tag == "Original":
+                return QColor(200, 50, 50)   # red — the one to delete
+            if msg.tag == "Detached Copy":
+                return QColor(60, 140, 60)   # green — the keeper
+
+        if role == Qt.ItemDataRole.FontRole and col == COL_ROLE and msg.tag:
+            font = QFont()
+            font.setBold(True)
+            return font
 
         if role == Qt.ItemDataRole.FontRole and col == COL_ATTACHMENTS and msg.has_attachment:
             font = QFont()
@@ -196,6 +208,8 @@ class MessageTableModel(QAbstractTableModel):
                     names = msg.attachment_names
                     return ", ".join(names[:3]) + ("…" if len(names) > 3 else "")
                 return ""
+            case 7:
+                return msg.tag
         return ""
 
 
@@ -248,6 +262,9 @@ class MessageTableView(QTableView):
         hh.resizeSection(COL_FOLDER, 130)
         hh.setSectionResizeMode(COL_ATTACHMENTS, QHeaderView.ResizeMode.Interactive)
         hh.resizeSection(COL_ATTACHMENTS, 160)
+        hh.setSectionResizeMode(COL_ROLE, QHeaderView.ResizeMode.Fixed)
+        hh.resizeSection(COL_ROLE, 110)
+        self.setColumnHidden(COL_ROLE, True)
 
     def _build_header_context_menu(self) -> None:
         hh = self.horizontalHeader()
@@ -347,6 +364,10 @@ class MessageTableView(QTableView):
         """User toggled via header context menu — apply and notify."""
         self.set_show_to(show_to)
         self.show_to_toggled.emit(show_to)
+
+    def set_show_role(self, visible: bool) -> None:
+        """Show or hide the Role column (used for detached duplicate results)."""
+        self.setColumnHidden(COL_ROLE, not visible)
 
     def clear(self) -> None:
         self._model.clear()

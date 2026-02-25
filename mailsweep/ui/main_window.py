@@ -221,6 +221,8 @@ class MainWindow(QMainWindow):
         actions_menu.addAction("Backup…", self._on_backup_only)
         actions_menu.addAction("Backup && Delete…", self._on_backup_delete)
         actions_menu.addAction("Delete Selected…", self._on_delete)
+        actions_menu.addSeparator()
+        actions_menu.addAction("Find Detached Duplicates\u2026", self._on_find_detached)
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction("About MailSweep", self._on_about)
@@ -362,6 +364,7 @@ class MainWindow(QMainWindow):
     # ── Message table ─────────────────────────────────────────────────────────
 
     def _reload_messages(self) -> None:
+        self._msg_table.set_show_role(False)
         if not self._current_account:
             self._msg_table.clear()
             return
@@ -1099,6 +1102,32 @@ class MainWindow(QMainWindow):
         self._refresh_folder_panel()
         self._refresh_treemap()
         self._refresh_size_label()
+
+    # ── Find Detached Duplicates ─────────────────────────────────────────────
+
+    def _on_find_detached(self) -> None:
+        """Find originals left behind after Thunderbird 'Detach Attachment'."""
+        if not self._current_account or not self._current_account.id:
+            QMessageBox.warning(self, "No Account", "Select an account first.")
+            return
+
+        messages, orig_count, total_bytes = self._msg_repo.find_detached_originals(
+            self._current_account.id,
+        )
+        if not messages:
+            QMessageBox.information(
+                self, "Detached Duplicates",
+                "No detached duplicates found.",
+            )
+            return
+
+        self._msg_table.set_messages(messages)
+        self._msg_table.set_show_role(True)
+        size_str = human_size(total_bytes)
+        self._update_status(
+            f"Found {orig_count} detached originals ({size_str})"
+            " \u2014 select and delete to reclaim space"
+        )
 
     # ── View Headers ──────────────────────────────────────────────────────────
 

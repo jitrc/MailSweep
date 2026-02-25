@@ -701,6 +701,61 @@ class MessageRepository:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def find_detached_originals(self, account_id: int) -> tuple[list[Message], int, int]:
+        """Find original messages that have a smaller detached copy.
+
+        Thunderbird's "Detach Attachment" leaves the original (with attachment)
+        on the server alongside the stripped copy.  This finds pairs sharing
+        (from_addr, subject, date) where one is >1.5x larger.
+
+        Returns both the originals (tagged "Original") and copies (tagged
+        "Detached Copy") grouped by pair, so the user can verify before deleting.
+
+        Returns (messages, original_count, original_total_bytes).
+        """
+        sql = """
+            WITH non_gmail AS (
+                SELECT m.* FROM messages m
+                JOIN folders f ON m.folder_id = f.id
+                WHERE f.account_id = ?
+                  AND f.name NOT LIKE '[Gmail]/%%'
+            ),
+            pairs AS (
+                SELECT a.id AS copy_id, b.id AS orig_id
+                FROM non_gmail a
+                JOIN non_gmail b
+                  ON a.from_addr = b.from_addr
+                 AND a.date = b.date
+                 AND a.subject = b.subject
+                 AND a.size_bytes < b.size_bytes
+                 AND b.size_bytes > a.size_bytes * 1.5
+            )
+            SELECT DISTINCT m.*, f.name AS folder_name,
+                   CASE WHEN m.id IN (SELECT orig_id FROM pairs)
+                        THEN 'Original'
+                        ELSE 'Detached Copy'
+                   END AS tag
+            FROM (
+                SELECT orig_id AS mid FROM pairs
+                UNION
+                SELECT copy_id AS mid FROM pairs
+            ) ids
+            JOIN messages m ON m.id = ids.mid
+            JOIN folders f ON f.id = m.folder_id
+            ORDER BY m.from_addr, m.subject, m.date, m.size_bytes DESC
+        """
+        rows = self._conn.execute(sql, (account_id,)).fetchall()
+        messages = []
+        for r in rows:
+            row_dict = dict(r)
+            tag = row_dict.pop("tag", "")
+            msg = Message.from_row(row_dict)
+            msg.tag = tag
+            messages.append(msg)
+        originals = [m for m in messages if m.tag == "Original"]
+        total_bytes = sum(m.size_bytes for m in originals)
+        return messages, len(originals), total_bytes
+
     def get_folders_for_message(self, msg: Message, include_thread: bool = False) -> list[str]:
         """Return all folder names containing the same physical message.
 
