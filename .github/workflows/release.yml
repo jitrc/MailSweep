@@ -19,9 +19,6 @@ jobs:
           - os: windows-latest
             artifact_name: MailSweep.exe
             asset_name: MailSweep-windows.exe
-          - os: macos-latest
-            artifact_name: MailSweep
-            asset_name: MailSweep-macos
 
     runs-on: ${{ matrix.os }}
 
@@ -51,6 +48,38 @@ jobs:
         with:
           name: ${{ matrix.asset_name }}
           path: dist/${{ matrix.asset_name }}
+
+  macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller
+
+      - name: Build .app bundle
+        run: uv run pyinstaller mailsweep.spec
+
+      - name: Create DMG
+        run: |
+          # Create a zip of the .app bundle for distribution
+          cd dist
+          zip -r ../MailSweep-macos-arm64.zip MailSweep.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MailSweep-macos-arm64.zip
+          path: MailSweep-macos-arm64.zip
 
   appimage:
     runs-on: ubuntu-22.04
@@ -136,7 +165,7 @@ jobs:
           path: MailSweep-x86_64.AppImage
 
   release:
-    needs: [build, appimage]
+    needs: [build, macos, appimage]
     runs-on: ubuntu-latest
 
     steps:

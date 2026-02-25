@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for MailSweep (onefile mode)."""
+"""PyInstaller spec for MailSweep (onefile mode, .app bundle on macOS)."""
+import sys
 
 a = Analysis(
     ['mailsweep/main.py'],
@@ -48,3 +49,15 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        exe,
+        name='MailSweep.app',
+        bundle_identifier='com.jitrc.mailsweep',
+        info_plist={
+            'NSHighResolutionCapable': True,
+            'NSRequiresAquaSystemAppearance': False,
+            'CFBundleShortVersionString': '0.3.1',
+        },
+    )
