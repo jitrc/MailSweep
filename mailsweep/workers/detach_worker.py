@@ -95,8 +95,10 @@ class DetachWorker(QObject):
                         orig_flags = fetch_data[msg.uid].get(b"FLAGS", [])
                         orig_date = fetch_data[msg.uid].get(b"INTERNALDATE")
 
-                        # Strip attachments
-                        save_subdir = self._save_dir / f"uid_{msg.uid}"
+                        # Strip attachments — save to <label>/<subject_slug>/
+                        folder_safe = _slug(folder_name)
+                        subject_slug = _slug(msg.subject or "no_subject")[:60]
+                        save_subdir = self._save_dir / folder_safe / f"{msg.uid}_{subject_slug}"
                         cleaned_bytes, saved_names = strip_attachments(raw, save_subdir, msg.uid)
 
                         if not saved_names:
@@ -130,3 +132,8 @@ class DetachWorker(QObject):
             except Exception:
                 pass
             self.finished.emit()
+
+
+def _slug(text: str) -> str:
+    """Convert text to a safe filesystem slug."""
+    return "".join(c if c.isalnum() or c in " -_." else "_" for c in text).strip()
