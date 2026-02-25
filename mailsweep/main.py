@@ -22,12 +22,19 @@ def _setup_logging() -> None:
 def main() -> None:
     _setup_logging()
     try:
+        from pathlib import Path
+
+        from PyQt6.QtGui import QIcon
         from PyQt6.QtWidgets import QApplication
         from mailsweep.ui.main_window import MainWindow
 
         app = QApplication(sys.argv)
         app.setApplicationName("MailSweep")
         app.setOrganizationName("MailSweep")
+
+        icon_path = Path(__file__).resolve().parent / "resources" / "icon.svg"
+        if icon_path.exists():
+            app.setWindowIcon(QIcon(str(icon_path)))
 
         window = MainWindow()
         window.show()

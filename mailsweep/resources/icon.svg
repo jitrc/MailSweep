@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#1E88E5"/>
+      <stop offset="1" stop-color="#0D47A1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+
+  <!-- Shadow under envelope -->
+  <rect x="80" y="156" width="368" height="240" rx="14" fill="#0D47A1" opacity="0.3"/>
+
+  <!-- Envelope body -->
+  <rect x="72" y="148" width="368" height="240" rx="14" fill="#ECEFF1"/>
+
+  <!-- Treemap blocks inside envelope -->
+  <rect x="84"  y="224" width="140" height="84"  rx="6" fill="#EF5350"/>
+  <rect x="84"  y="316" width="140" height="60"  rx="6" fill="#66BB6A"/>
+  <rect x="232" y="224" width="100" height="152" rx="6" fill="#FFA726"/>
+  <rect x="340" y="224" width="88"  height="72"  rx="6" fill="#AB47BC"/>
+  <rect x="340" y="304" width="88"  height="72"  rx="6" fill="#42A5F5"/>
+
+  <!-- Envelope flap -->
+  <polygon points="72,148 256,276 440,148" fill="#CFD8DC"/>
+  <polyline points="72,148 256,276 440,148" fill="none" stroke="#B0BEC5" stroke-width="2"/>
+
+  <!-- Sparkles (sweep/clean) -->
+  <path d="M412,92 L420,68 L428,92 L452,100 L428,108 L420,132 L412,108 L388,100 Z" fill="#FFD54F"/>
+  <path d="M356,52 L361,38 L366,52 L380,57 L366,62 L361,76 L356,62 L342,57 Z" fill="#FFE082" opacity="0.8"/>
+</svg>

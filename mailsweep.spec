@@ -10,6 +10,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (certifi.where(), 'certifi'),
+        ('mailsweep/resources/icon.svg', 'mailsweep/resources'),
     ],
     hiddenimports=[
         'imapclient',
