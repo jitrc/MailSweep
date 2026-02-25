@@ -1525,6 +1525,7 @@ class MainWindow(QMainWindow):
             "MailSweep — IMAP Mailbox Analyzer & Cleaner\n\n"
             "Visualize where your email storage is going and\n"
             "surgically reclaim it with bulk operations.\n\n"
+            "Author: Jit Ray Chowdhury\n"
             "Built with Python, PyQt6, and imapclient.",
         )
 

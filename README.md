@@ -125,6 +125,10 @@ uv run mypy mailsweep/
   and sends it as system prompt. Supports Ollama (local), OpenAI, and Anthropic. IMAP moves use
   RFC 6851 `MOVE` with `COPY`+`DELETE`+`EXPUNGE` fallback.
 
+## Author
+
+Jit Ray Chowdhury
+
 ## License
 
 MIT
