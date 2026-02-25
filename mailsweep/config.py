@@ -36,25 +36,45 @@ SCAN_TIMEOUT_SECONDS: int = 60
 MESSAGE_TABLE_MAX_ROWS: int = 5000
 TREEMAP_MIN_SIZE_BYTES: int = 1024  # Don't draw tiles smaller than 1 KB
 
+# ── AI ───────────────────────────────────────────────────────────────────────
+
+AI_PROVIDER: str = "ollama"              # ollama | openai | anthropic | custom
+AI_BASE_URL: str = "http://localhost:11434/v1"
+AI_API_KEY: str = ""
+AI_MODEL: str = "llama3.2"
+
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 
 def save_settings() -> None:
-    """Persist user-changeable settings to disk."""
+    """Persist user-changeable settings to disk.  AI API key goes to keyring."""
     data = {
         "scan_batch_size": SCAN_BATCH_SIZE,
         "message_table_max_rows": MESSAGE_TABLE_MAX_ROWS,
         "default_save_dir": str(DEFAULT_SAVE_DIR),
+        "ai_provider": AI_PROVIDER,
+        "ai_base_url": AI_BASE_URL,
+        "ai_model": AI_MODEL,
+        # API key stored in keyring, not here
     }
     try:
         SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning("Could not save settings: %s", exc)
 
+    # Store AI API key in system keyring
+    if AI_API_KEY:
+        try:
+            from mailsweep.utils.keyring_store import set_password
+            set_password("ai_api_key", "mailsweep_ai", AI_API_KEY)
+        except Exception as exc:
+            logger.warning("Could not save AI API key to keyring: %s", exc)
+
 
 def load_settings() -> None:
     """Load persisted settings from disk, falling back to defaults."""
     global SCAN_BATCH_SIZE, MESSAGE_TABLE_MAX_ROWS, DEFAULT_SAVE_DIR
+    global AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL
     if not SETTINGS_PATH.exists():
         return
     try:
@@ -65,8 +85,20 @@ def load_settings() -> None:
         if saved_dir:
             DEFAULT_SAVE_DIR = Path(saved_dir)
             DEFAULT_SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        AI_PROVIDER = data.get("ai_provider", AI_PROVIDER)
+        AI_BASE_URL = data.get("ai_base_url", AI_BASE_URL)
+        AI_MODEL = data.get("ai_model", AI_MODEL)
     except Exception as exc:
         logger.warning("Could not load settings: %s", exc)
+
+    # Load AI API key from keyring
+    try:
+        from mailsweep.utils.keyring_store import get_password
+        key = get_password("ai_api_key", "mailsweep_ai")
+        if key:
+            AI_API_KEY = key
+    except Exception as exc:
+        logger.debug("Could not load AI API key from keyring: %s", exc)
 
 
 # Load on import so settings are available immediately

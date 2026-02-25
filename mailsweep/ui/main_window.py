@@ -67,6 +67,8 @@ class MainWindow(QMainWindow):
         self._scan_worker: QtScanWorker | None = None
         self._op_thread: QThread | None = None
         self._op_worker: object | None = None
+        self._move_thread: QThread | None = None
+        self._move_worker: object | None = None
         self._op_processed: dict[int, list[int]] = {}  # folder_id → [uids]
         self._op_needs_rescan = False
         self._op_updates_cache = False
@@ -84,6 +86,7 @@ class MainWindow(QMainWindow):
         self._build_status_bar()
         self._build_menu()
         self._build_log_dock()
+        self._build_ai_dock()
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
@@ -199,6 +202,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Settings…", self._on_settings)
         view_menu.addSeparator()
         view_menu.addAction("Show Log", self._show_log_dock)
+        view_menu.addAction("Show AI Assistant", self._show_ai_dock)
 
         actions_menu = menubar.addMenu("&Actions")
         actions_menu.addAction("Scan All Folders", self._on_scan)
@@ -1128,9 +1132,95 @@ class MainWindow(QMainWindow):
     def _show_log_dock(self) -> None:
         self._log_dock.show()
 
+    def _build_ai_dock(self) -> None:
+        from mailsweep.ui.ai_dock import AiDockWidget
+        self._ai_dock = AiDockWidget(self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._ai_dock)
+        self._ai_dock.context_requested.connect(self._on_ai_context_requested)
+        self._ai_dock.apply_moves.connect(self._on_ai_apply_moves)
+        self._ai_dock.hide()
+
+    def _show_ai_dock(self) -> None:
+        self._ai_dock.show()
+
+    def _on_ai_context_requested(self) -> None:
+        """Build DB context and pass it to the AI dock."""
+        if not self._current_account or not self._current_account.id:
+            self._ai_dock.set_context("No account selected.")
+            return
+        from mailsweep.ai.context import build_mailbox_context
+        ctx = build_mailbox_context(
+            self._conn,
+            account_id=self._current_account.id,
+            folder_ids=self._current_folder_ids if self._current_folder_ids else None,
+        )
+        self._ai_dock.set_context(ctx)
+
+    def _on_ai_apply_moves(self, ops: list) -> None:
+        """Handle AI-suggested MOVE operations after user confirmation."""
+        if not ops:
+            return
+        if not self._current_account:
+            QMessageBox.warning(self, "No Account", "No account selected.")
+            return
+
+        # Build summary for confirmation dialog
+        lines = [f"The AI suggests moving {len(ops)} message(s):\n"]
+        for op in ops[:20]:
+            lines.append(f"  UID {op.uid}: {op.src_folder} -> {op.dst_folder}")
+        if len(ops) > 20:
+            lines.append(f"  ... and {len(ops) - 20} more")
+        lines.append("\nProceed with these moves?")
+
+        reply = QMessageBox.question(
+            self, "Apply AI Suggestions",
+            "\n".join(lines),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from mailsweep.workers.move_worker import MoveWorker
+
+        worker = MoveWorker()
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        account = self._current_account
+        conn = self._conn
+        folder_repo = self._folder_repo
+        msg_repo = self._msg_repo
+
+        thread.started.connect(
+            lambda: worker.run(account, ops, conn, folder_repo, msg_repo)
+        )
+        worker.progress.connect(
+            lambda done, total, msg: self._progress_panel.set_progress(done, total, msg)
+        )
+        worker.error.connect(self._on_scan_error)
+        worker.finished.connect(self._on_move_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._move_thread = thread
+        self._move_worker = worker
+        self._progress_panel.set_running(f"Moving {len(ops)} messages…")
+        thread.start()
+
+    def _on_move_finished(self, count: int) -> None:
+        self._progress_panel.set_done(f"Moved {count} message(s)")
+        self._move_thread = None
+        self._move_worker = None
+        self._reload_messages()
+        self._refresh_folder_panel()
+        self._refresh_treemap()
+        self._refresh_size_label()
+
     def _on_settings(self) -> None:
         from mailsweep.ui.settings_dialog import SettingsDialog
-        SettingsDialog(self).exec()
+        if SettingsDialog(self).exec() == QDialog.DialogCode.Accepted:
+            self._ai_dock._load_from_config()
 
     def _update_status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 3000)

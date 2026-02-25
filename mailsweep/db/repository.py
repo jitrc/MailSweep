@@ -546,6 +546,79 @@ class MessageRepository:
         rows = self._conn.execute(sql, params).fetchall()
         return [Message.from_row(dict(r)) for r in rows]
 
+    def get_folder_tree_summary(self, account_id: int) -> list[dict]:
+        """Return folder name, message_count, total_size_bytes, min(date), max(date) for each folder."""
+        rows = self._conn.execute(
+            """
+            SELECT f.id, f.name, f.message_count, f.total_size_bytes,
+                   MIN(m.date) AS min_date, MAX(m.date) AS max_date
+            FROM folders f
+            LEFT JOIN messages m ON m.folder_id = f.id
+            WHERE f.account_id = ?
+            GROUP BY f.id
+            ORDER BY f.name
+            """,
+            (account_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_cross_folder_senders(self, account_id: int, min_folders: int = 2) -> list[dict]:
+        """Find senders that appear in multiple folders (potential misfilings).
+
+        Returns list of dicts with sender_email, folder_counts (JSON), total_count.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT sender_email, COUNT(DISTINCT f.name) AS folder_count,
+                   GROUP_CONCAT(DISTINCT f.name || ':' || cnt) AS folder_counts,
+                   SUM(cnt) AS total_count
+            FROM (
+                SELECT
+                    CASE WHEN INSTR(m.from_addr, '<') > 0
+                         THEN LOWER(SUBSTR(m.from_addr,
+                                           INSTR(m.from_addr, '<') + 1,
+                                           INSTR(m.from_addr, '>') - INSTR(m.from_addr, '<') - 1))
+                         ELSE LOWER(m.from_addr)
+                    END AS sender_email,
+                    m.folder_id,
+                    COUNT(*) AS cnt
+                FROM messages m
+                JOIN folders f ON f.id = m.folder_id
+                WHERE f.account_id = ?
+                GROUP BY sender_email, m.folder_id
+            ) sub
+            JOIN folders f ON f.id = sub.folder_id
+            GROUP BY sender_email
+            HAVING folder_count >= ?
+            ORDER BY folder_count DESC, total_count DESC
+            LIMIT 100
+            """,
+            (account_id, min_folders),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_top_senders_per_folder(self, folder_id: int, limit: int = 5) -> list[dict]:
+        """Return top senders for a specific folder."""
+        rows = self._conn.execute(
+            """
+            SELECT
+                CASE WHEN INSTR(from_addr, '<') > 0
+                     THEN LOWER(SUBSTR(from_addr,
+                                       INSTR(from_addr, '<') + 1,
+                                       INSTR(from_addr, '>') - INSTR(from_addr, '<') - 1))
+                     ELSE LOWER(from_addr)
+                END AS sender_email,
+                COUNT(*) AS message_count
+            FROM messages
+            WHERE folder_id = ?
+            GROUP BY sender_email
+            ORDER BY message_count DESC
+            LIMIT ?
+            """,
+            (folder_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_folders_for_message(self, msg: Message) -> list[str]:
         """Return all folder names containing the same physical message.
 
