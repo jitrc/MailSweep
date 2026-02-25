@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-25
-**Status:** All 6 phases implemented + extensive post-phase enhancements + full code review complete. App running. ~4,700 lines of Python. 56/56 tests passing. Published on GitHub.
+**Status:** All 6 phases implemented + extensive post-phase enhancements + full code review complete. App running. ~4,800 lines of Python. 56/56 tests passing. Published on GitHub. Release v0.2.0.
 
 ---
 
@@ -159,6 +159,7 @@ Detach worker doesn't need this — it APPENDs a replacement message, so the old
 | **Settings persistence** | Batch size, max rows, save dir saved to `~/.config/mailsweep/settings.json` |
 | **Sender email dedup** | Sender treemap/summary groups by extracted email, not full "Name \<email\>" string |
 | **Message-ID matching** | `message_id` from ENVELOPE used for cross-folder dedup, unlabelled detection, and "View Headers → Labels" |
+| **Force Full Rescan** | Actions menu option to re-fetch all message metadata, bypassing incremental cache |
 
 ---
 
@@ -239,6 +240,12 @@ Outlook token refresh fix, README/LICENSE/.gitignore added, pyproject.toml metad
 ## Git Log
 
 ```
+52a2a44  refactor: remove schema migrations, inline all columns and indexes
+8fbdba4  feat: add Force Full Rescan option in Actions menu
+2817424  feat: add message_id for cross-folder matching, fix unlabelled detection
+3161afd  feat: add GitHub Actions release workflow and update PyInstaller spec for onefile builds
+6d005ec  feat: add virtual "Unlabelled" folder for archived-only Gmail messages
+cbc8dd7  feat: toggleable From/To column, receiver treemap & To filter
 0f22b1c  fix: medium/low priority code review issues
 dd0523d  fix: merge senders by email address, use jitrc/MailSweep URLs
 7470014  fix: code review — critical and high priority issues
