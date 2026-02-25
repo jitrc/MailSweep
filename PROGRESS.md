@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-25
-**Status:** All 6 phases + AI-powered analysis & reorganization implemented. App running. ~6,200 lines of Python. 74/74 tests passing. Published on GitHub. Release v0.2.0.
+**Status:** All 7 phases implemented. App running. ~6,400 lines of Python. 85/85 tests passing. Published on GitHub. Release v0.3.1.
 
 ---
 
@@ -160,6 +160,10 @@ LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
 | Treemap hover highlight stuck after mouse leaves | Added `leaveEvent` to clear `_hovered_key` |
 | Unlabelled folder included messages with labels (e.g. OLD/2016) | Added `message_id` (RFC 5322) to schema; cross-folder matching now uses globally unique ID |
 | View Headers only showed single folder, not all Gmail labels | `get_folders_for_message()` queries all folders sharing same `message_id`; dialog shows "Labels:" |
+| Folder panel stale after settings change | Added `_refresh_folder_panel()` + `_reload_messages()` after settings dialog accepted |
+| Unlabelled stats stale after scan completes | Added `_refresh_folder_panel()` + `_refresh_size_label()` to `_on_scan_all_done()` |
+| Dots in folder names treated as hierarchy separators | Removed `.replace(".", "/")` in folder panel — only split on `/` (Gmail delimiter) |
+| AppImage `execv error: No such file or directory` | YAML heredoc indentation added leading whitespace to `.desktop` Exec= line; fixed with `sed` strip |
 
 ---
 
@@ -186,6 +190,8 @@ LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
 | **AI move suggestions** | LLM outputs `MOVE:` lines → user confirms → IMAP move worker executes |
 | **IMAP move worker** | RFC 6851 MOVE with copy+delete fallback, batched by source folder, DB cache update |
 | **AI settings** | Provider/URL/model in settings dialog + keyring for API key |
+| **Move to… (manual)** | "Move to…" toolbar button + context menu action — folder picker dialog, reuses MoveWorker |
+| **Thread-aware unlabelled** | Three modes for unlabelled detection: message-id only, in-reply-to chain, Gmail thread ID |
 
 ---
 
@@ -266,6 +272,11 @@ Outlook token refresh fix, README/LICENSE/.gitignore added, pyproject.toml metad
 ## Git Log
 
 ```
+b04403a  fix: strip leading whitespace from AppImage desktop file
+0164f9a  fix: stop treating dots as folder hierarchy separators
+4b1c44e  feat: add "Move to…" for messages + fix stale folder panel after settings/scan
+30efb35  feat: add thread-aware unlabelled detection with three configurable modes
+6a02667  chore: bump version to 0.3.0, update PROGRESS.md and README for AI feature
 5f8a4d0  feat: add AI-powered email analysis and reorganization
 2b552f4  feat: add AppImage build to release workflow
 994e9fa  fix: build Linux binary on ubuntu-22.04 for GLIBC 2.35 compat
