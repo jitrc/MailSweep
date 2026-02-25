@@ -41,15 +41,16 @@ class FolderPanel(QTreeWidget):
         all_item.setFont(0, font)
         self.addTopLevelItem(all_item)
 
-    def populate(self, folders: list[Folder]) -> None:
+    def populate(self, folders: list[Folder], dedup_total: int | None = None) -> None:
         """Rebuild the tree from a flat list of folders.
 
         Ordering: INBOX first, then [Gmail]/* group, then everything else alpha-sorted.
+        If dedup_total is given, use it for "All Folders" size (avoids double-counting).
         """
         self.clear()
         self._add_all_item()
 
-        total_size = sum(f.total_size_bytes for f in folders)
+        total_size = dedup_total if dedup_total is not None else sum(f.total_size_bytes for f in folders)
         all_item = self.topLevelItem(0)
         if all_item:
             all_item.setText(1, human_size(total_size))
@@ -113,6 +114,25 @@ class FolderPanel(QTreeWidget):
         """Update the size badge for a single folder."""
         root = self.invisibleRootItem()
         self._update_item_size(root, folder_id, size_bytes)
+
+    def select_folder(self, folder_id: int) -> None:
+        """Programmatically select a folder by ID in the tree."""
+        item = self._find_item(self.invisibleRootItem(), folder_id)
+        if item:
+            self.setCurrentItem(item)
+            self._on_item_clicked(item, 0)
+
+    def _find_item(self, parent: QTreeWidgetItem, folder_id: int) -> QTreeWidgetItem | None:
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            if child is None:
+                continue
+            if child.data(0, FOLDER_ID_ROLE) == folder_id:
+                return child
+            found = self._find_item(child, folder_id)
+            if found:
+                return found
+        return None
 
     def _update_item_size(
         self, parent: QTreeWidgetItem, folder_id: int, size_bytes: int

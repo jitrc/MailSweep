@@ -120,7 +120,8 @@ class FilterBar(QWidget):
 
         self.filter_changed.emit(kwargs)
 
-    def _clear_and_emit(self) -> None:
+    def clear_filters(self) -> None:
+        """Reset all filter fields without emitting a signal."""
         self._from_edit.clear()
         self._subject_edit.clear()
         self._date_from.setDate(QDate(2000, 1, 1))
@@ -128,7 +129,15 @@ class FilterBar(QWidget):
         self._size_min.setValue(0)
         self._size_max.setValue(0)
         self._has_attachment.setChecked(False)
+
+    def _clear_and_emit(self) -> None:
+        self.clear_filters()
         self.filter_changed.emit({})
+
+    def set_from_filter(self, from_addr: str) -> None:
+        """Set the From field and trigger a filter update."""
+        self._from_edit.setText(from_addr)
+        self._emit_filter()
 
     def get_filter_kwargs(self) -> dict:
         """Return current filter parameters without emitting signal."""

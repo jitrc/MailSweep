@@ -68,6 +68,15 @@ class MessageTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.UserRole:
             return msg
 
+        # Sort by raw numeric/date values, not display strings
+        if role == Qt.ItemDataRole.UserRole + 1:  # sort role
+            if col == COL_SIZE:
+                return msg.size_bytes
+            if col == COL_DATE:
+                # Return timestamp for proper date sorting
+                return msg.date.timestamp() if msg.date else 0.0
+            return self._display_data(msg, col)
+
         if role == Qt.ItemDataRole.ForegroundRole and col == COL_SIZE:
             size = msg.size_bytes
             if size > 10_000_000:
@@ -178,9 +187,11 @@ class MessageTableView(QTableView):
     Configured QTableView with context menu actions for bulk operations.
     Emits action signals that MainWindow connects to workers.
     """
-    detach_requested = pyqtSignal(list)    # list[Message]
-    backup_requested = pyqtSignal(list)    # list[Message]
-    delete_requested = pyqtSignal(list)    # list[Message]
+    extract_requested = pyqtSignal(list)    # list[Message]
+    detach_requested = pyqtSignal(list)     # list[Message]
+    backup_requested = pyqtSignal(list)     # list[Message]
+    backup_delete_requested = pyqtSignal(list)  # list[Message]
+    delete_requested = pyqtSignal(list)     # list[Message]
     view_headers_requested = pyqtSignal(object)  # Message
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -189,6 +200,7 @@ class MessageTableView(QTableView):
         self._proxy = QSortFilterProxyModel()
         self._proxy.setSourceModel(self._model)
         self._proxy.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._proxy.setSortRole(Qt.ItemDataRole.UserRole + 1)
         self.setModel(self._proxy)
 
         self._configure_view()
@@ -226,15 +238,22 @@ class MessageTableView(QTableView):
         if not selected:
             return
 
+        n = len(selected)
         menu = QMenu(self)
-        detach_act = menu.addAction(f"Detach Attachments ({len(selected)} msg(s))")
-        backup_act = menu.addAction(f"Backup & Delete ({len(selected)} msg(s))")
-        delete_act = menu.addAction(f"Delete ({len(selected)} msg(s))")
+
+        extract_act = menu.addAction(f"Extract Attachments ({n} msg(s))")
+        detach_act = menu.addAction(f"Detach Attachments ({n} msg(s))")
+        menu.addSeparator()
+        backup_act = menu.addAction(f"Backup ({n} msg(s))")
+        backup_del_act = menu.addAction(f"Backup && Delete ({n} msg(s))")
+        delete_act = menu.addAction(f"Delete ({n} msg(s))")
         menu.addSeparator()
         headers_act = menu.addAction("View Headers…")
 
+        extract_act.triggered.connect(lambda: self.extract_requested.emit(selected))
         detach_act.triggered.connect(lambda: self.detach_requested.emit(selected))
         backup_act.triggered.connect(lambda: self.backup_requested.emit(selected))
+        backup_del_act.triggered.connect(lambda: self.backup_delete_requested.emit(selected))
         delete_act.triggered.connect(lambda: self.delete_requested.emit(selected))
         headers_act.triggered.connect(
             lambda: self.view_headers_requested.emit(selected[0]) if selected else None
@@ -263,6 +282,17 @@ class MessageTableView(QTableView):
 
     def get_selected_messages(self) -> list[Message]:
         return self._selected_messages()
+
+    def select_by_uid(self, uid: int) -> bool:
+        """Find and select/scroll-to a message by its UID. Returns True if found."""
+        for row in range(self._proxy.rowCount()):
+            idx = self._proxy.index(row, 0)
+            msg = idx.data(Qt.ItemDataRole.UserRole)
+            if isinstance(msg, Message) and msg.uid == uid:
+                self.selectRow(row)
+                self.scrollTo(idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+                return True
+        return False
 
     def clear(self) -> None:
         self._model.clear()

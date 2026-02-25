@@ -299,3 +299,31 @@ class MessageRepository:
         """
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    def get_dedup_total_size(
+        self, folder_ids: list[int] | None = None
+    ) -> tuple[int, int]:
+        """Return (dedup_size_bytes, dedup_count) after removing duplicate messages.
+
+        Gmail labels cause the same message to appear in multiple folders.
+        We deduplicate by (from_addr, subject, date, size_bytes) as a proxy
+        for message identity.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if folder_ids:
+            placeholders = ",".join("?" * len(folder_ids))
+            clauses.append(f"folder_id IN ({placeholders})")
+            params.extend(folder_ids)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        sql = f"""
+            SELECT COALESCE(SUM(size_bytes), 0) AS total,
+                   COUNT(*) AS cnt
+            FROM (
+                SELECT DISTINCT from_addr, subject, date, size_bytes
+                FROM messages
+                {where}
+            )
+        """
+        row = self._conn.execute(sql, params).fetchone()
+        return (row[0], row[1]) if row else (0, 0)

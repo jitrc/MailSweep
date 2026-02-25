@@ -1,10 +1,9 @@
 """Treemap widget — squarify layout painted with QPainter. Click to filter."""
 from __future__ import annotations
 
-import math
 from typing import NamedTuple
 
-from PyQt6.QtCore import QRect, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -14,7 +13,7 @@ from PyQt6.QtGui import (
     QPainter,
     QPen,
 )
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from mailsweep.utils.size_fmt import human_size
 
@@ -25,7 +24,6 @@ except ImportError:
     _HAS_SQUARIFY = False
 
 
-# Palette for folder tiles
 _PALETTE = [
     QColor(70, 130, 180),   # steel blue
     QColor(60, 179, 113),   # medium sea green
@@ -41,24 +39,27 @@ _PALETTE = [
 
 
 class TreemapItem(NamedTuple):
-    folder_id: int
-    folder_name: str
+    key: str          # unique identifier (folder_id, email addr, or uid)
+    label: str        # display name
+    sublabel: str     # second line (e.g. "42 msgs" or folder name)
     size_bytes: int
 
 
-class TreemapWidget(QWidget):
-    """
-    Draws a squarify treemap of folder sizes.
-    Emits folder_clicked(folder_id) when user clicks a tile.
-    """
-    folder_clicked = pyqtSignal(int)  # folder_id
+VIEW_FOLDERS = 0
+VIEW_SENDERS = 1
+VIEW_MESSAGES = 2
+
+
+class _TreemapCanvas(QWidget):
+    """Internal paint surface for the treemap tiles."""
+    item_clicked = pyqtSignal(str)  # key
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._items: list[TreemapItem] = []
         self._rects: list[tuple[QRectF, TreemapItem]] = []
-        self._hovered_id: int | None = None
-        self.setMinimumHeight(120)
+        self._hovered_key: str | None = None
+        self.setMinimumHeight(100)
         self.setMouseTracking(True)
 
     def set_data(self, items: list[TreemapItem]) -> None:
@@ -101,7 +102,8 @@ class TreemapWidget(QWidget):
         painter.fillRect(self.rect(), bg)
 
         if not self._rects:
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No data — scan a mailbox first")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "No data — scan a mailbox first")
             return
 
         font = QFont()
@@ -111,38 +113,55 @@ class TreemapWidget(QWidget):
 
         for i, (rect, item) in enumerate(self._rects):
             color = _PALETTE[i % len(_PALETTE)]
-            is_hovered = item.folder_id == self._hovered_id
-
-            if is_hovered:
+            if item.key == self._hovered_key:
                 color = color.lighter(130)
 
             painter.fillRect(rect, color)
             painter.setPen(QPen(QColor(255, 255, 255, 80), 1))
             painter.drawRect(rect)
 
-            # Draw label if tile is large enough
             iw, ih = int(rect.width()), int(rect.height())
             if iw > 40 and ih > 20:
                 text_rect = rect.adjusted(4, 4, -4, -4)
-                display_name = item.folder_name.split("/")[-1]
                 size_str = human_size(item.size_bytes)
 
+                lh = fm.height() + 2  # line height: font height + 2px spacing
+                tx = text_rect.x()
+                tw = text_rect.width()
+                max_text_w = iw - 8
+
                 painter.setPen(QColor(255, 255, 255))
-                if ih > 36:
-                    # Two lines: name + size
-                    name_rect = QRectF(text_rect.x(), text_rect.y(),
-                                       text_rect.width(), text_rect.height() / 2)
-                    size_rect = QRectF(text_rect.x(), text_rect.y() + text_rect.height() / 2,
-                                       text_rect.width(), text_rect.height() / 2)
-                    painter.drawText(name_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                                     fm.elidedText(display_name, Qt.TextElideMode.ElideRight, iw - 8))
-                    painter.drawText(size_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                if ih > 48 and item.sublabel:
+                    # Three lines stacked from top: label, sublabel, size
+                    ty = text_rect.y()
+                    painter.drawText(QRectF(tx, ty, tw, lh),
+                                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                                     fm.elidedText(item.label, Qt.TextElideMode.ElideRight, max_text_w))
+                    ty += lh
+                    painter.setPen(QColor(255, 255, 255, 180))
+                    painter.drawText(QRectF(tx, ty, tw, lh),
+                                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                                     fm.elidedText(item.sublabel, Qt.TextElideMode.ElideRight, max_text_w))
+                    ty += lh
+                    painter.setPen(QColor(255, 255, 255))
+                    painter.drawText(QRectF(tx, ty, tw, lh),
+                                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                                     size_str)
+                elif ih > 36:
+                    # Two lines: label + size
+                    ty = text_rect.y()
+                    painter.drawText(QRectF(tx, ty, tw, lh),
+                                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                                     fm.elidedText(item.label, Qt.TextElideMode.ElideRight, max_text_w))
+                    ty += lh
+                    painter.drawText(QRectF(tx, ty, tw, lh),
+                                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
                                      size_str)
                 else:
-                    combined = f"{display_name} ({size_str})"
+                    combined = f"{item.label} ({size_str})"
                     painter.drawText(text_rect,
                                      Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                                     fm.elidedText(combined, Qt.TextElideMode.ElideRight, iw - 8))
+                                     fm.elidedText(combined, Qt.TextElideMode.ElideRight, max_text_w))
 
         painter.end()
 
@@ -151,15 +170,16 @@ class TreemapWidget(QWidget):
         hovered = None
         for rect, item in self._rects:
             if rect.contains(pos):
-                hovered = item.folder_id
+                hovered = item.key
                 break
-        if hovered != self._hovered_id:
-            self._hovered_id = hovered
+        if hovered != self._hovered_key:
+            self._hovered_key = hovered
             self.update()
             if hovered is not None:
-                item_found = next((it for _, it in self._rects if it.folder_id == hovered), None)
-                if item_found:
-                    self.setToolTip(f"{item_found.folder_name}\n{human_size(item_found.size_bytes)}")
+                found = next((it for _, it in self._rects if it.key == hovered), None)
+                if found:
+                    tip = f"{found.label}\n{found.sublabel}\n{human_size(found.size_bytes)}" if found.sublabel else f"{found.label}\n{human_size(found.size_bytes)}"
+                    self.setToolTip(tip)
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -167,6 +187,73 @@ class TreemapWidget(QWidget):
             pos = event.position()
             for rect, item in self._rects:
                 if rect.contains(pos):
-                    self.folder_clicked.emit(item.folder_id)
+                    self.item_clicked.emit(item.key)
                     break
         super().mousePressEvent(event)
+
+
+class TreemapWidget(QWidget):
+    """
+    Composite widget: view-mode selector + treemap canvas.
+    Emits typed signals depending on view mode.
+    """
+    folder_clicked = pyqtSignal(int)     # folder_id
+    folder_key_clicked = pyqtSignal(str) # raw key (folder_id, "path:...", or "msg:...")
+    sender_clicked = pyqtSignal(str)     # from_addr
+    message_clicked = pyqtSignal(int)    # message uid
+    view_mode_changed = pyqtSignal(int)  # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._view_mode = VIEW_FOLDERS
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        header = QHBoxLayout()
+        header.addWidget(QLabel("View:"))
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItem("Folders", VIEW_FOLDERS)
+        self._mode_combo.addItem("Senders", VIEW_SENDERS)
+        self._mode_combo.addItem("Messages", VIEW_MESSAGES)
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        self._mode_combo.setFixedWidth(120)
+        header.addWidget(self._mode_combo)
+        header.addStretch()
+        layout.addLayout(header)
+
+        self._canvas = _TreemapCanvas()
+        self._canvas.item_clicked.connect(self._on_item_clicked)
+        layout.addWidget(self._canvas, stretch=1)
+
+    def _on_mode_changed(self, idx: int) -> None:
+        self._view_mode = self._mode_combo.itemData(idx)
+        self.view_mode_changed.emit(self._view_mode)
+
+    def _on_item_clicked(self, key: str) -> None:
+        if self._view_mode == VIEW_FOLDERS:
+            self.folder_key_clicked.emit(key)
+            try:
+                self.folder_clicked.emit(int(key))
+            except ValueError:
+                pass
+        elif self._view_mode == VIEW_SENDERS:
+            self.sender_clicked.emit(key)
+        elif self._view_mode == VIEW_MESSAGES:
+            try:
+                self.message_clicked.emit(int(key))
+            except ValueError:
+                pass
+
+    @property
+    def view_mode(self) -> int:
+        return self._view_mode
+
+    def set_data(self, items: list[TreemapItem]) -> None:
+        self._canvas.set_data(items)
+
+    def setMinimumHeight(self, h: int) -> None:
+        super().setMinimumHeight(h)

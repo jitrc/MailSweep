@@ -33,7 +33,13 @@ from mailsweep.ui.filter_bar import FilterBar
 from mailsweep.ui.folder_panel import FolderPanel
 from mailsweep.ui.message_table import MessageTableView
 from mailsweep.ui.progress_panel import ProgressPanel
-from mailsweep.ui.treemap_widget import TreemapItem, TreemapWidget
+from mailsweep.ui.treemap_widget import (
+    VIEW_FOLDERS,
+    VIEW_MESSAGES,
+    VIEW_SENDERS,
+    TreemapItem,
+    TreemapWidget,
+)
 from mailsweep.utils.size_fmt import human_size
 from mailsweep.workers.qt_scan_worker import QtScanWorker
 
@@ -57,6 +63,8 @@ class MainWindow(QMainWindow):
         self._current_folder_ids: list[int] = []
         self._scan_thread: QThread | None = None
         self._scan_worker: QtScanWorker | None = None
+        self._op_thread: QThread | None = None
+        self._op_worker: object | None = None
 
         self._build_ui()
         self._load_accounts()
@@ -91,13 +99,21 @@ class MainWindow(QMainWindow):
         self._scan_selected_btn.clicked.connect(self._on_scan_selected)
         tb.addWidget(self._scan_selected_btn)
 
+        self._extract_btn = QPushButton("Extract Attachments…")
+        self._extract_btn.clicked.connect(lambda: self._on_extract_attachments())
+        tb.addWidget(self._extract_btn)
+
         self._detach_btn = QPushButton("Detach Attachments…")
         self._detach_btn.clicked.connect(self._on_detach)
         tb.addWidget(self._detach_btn)
 
-        self._backup_btn = QPushButton("Backup && Delete…")
-        self._backup_btn.clicked.connect(self._on_backup_delete)
+        self._backup_btn = QPushButton("Backup…")
+        self._backup_btn.clicked.connect(lambda: self._on_backup_only())
         tb.addWidget(self._backup_btn)
+
+        self._backup_delete_btn = QPushButton("Backup && Delete…")
+        self._backup_delete_btn.clicked.connect(self._on_backup_delete)
+        tb.addWidget(self._backup_delete_btn)
 
         self._delete_btn = QPushButton("Delete…")
         self._delete_btn.clicked.connect(self._on_delete)
@@ -126,14 +142,20 @@ class MainWindow(QMainWindow):
         v_splitter = QSplitter(Qt.Orientation.Vertical)
 
         self._msg_table = MessageTableView()
+        self._msg_table.extract_requested.connect(self._on_extract_messages)
         self._msg_table.detach_requested.connect(self._on_detach_messages)
-        self._msg_table.backup_requested.connect(self._on_backup_messages)
+        self._msg_table.backup_requested.connect(self._on_backup_messages_only)
+        self._msg_table.backup_delete_requested.connect(self._on_backup_messages)
         self._msg_table.delete_requested.connect(self._on_delete_messages)
         self._msg_table.view_headers_requested.connect(self._on_view_headers)
         v_splitter.addWidget(self._msg_table)
 
         self._treemap = TreemapWidget()
         self._treemap.folder_clicked.connect(self._on_treemap_folder_clicked)
+        self._treemap.folder_key_clicked.connect(self._on_treemap_folder_key_clicked)
+        self._treemap.sender_clicked.connect(self._on_treemap_sender_clicked)
+        self._treemap.message_clicked.connect(self._on_treemap_message_clicked)
+        self._treemap.view_mode_changed.connect(self._on_treemap_view_changed)
         v_splitter.addWidget(self._treemap)
 
         v_splitter.setSizes([500, 200])
@@ -145,9 +167,13 @@ class MainWindow(QMainWindow):
     def _build_status_bar(self) -> None:
         self._progress_panel = ProgressPanel()
         self._progress_panel.cancel_clicked.connect(self._on_cancel)
+        self._size_label = QLabel("")
         status_bar = QStatusBar()
-        status_bar.addPermanentWidget(self._progress_panel, stretch=1)
+        status_bar.addWidget(self._progress_panel, stretch=1)
+        status_bar.addPermanentWidget(self._size_label)
         self.setStatusBar(status_bar)
+        self._quota_usage: int | None = None  # server-reported usage in bytes
+        self._quota_bytes: int | None = None  # server quota limit in bytes
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -169,7 +195,10 @@ class MainWindow(QMainWindow):
         actions_menu.addAction("Scan All Folders", self._on_scan)
         actions_menu.addAction("Scan Selected Folder", self._on_scan_selected)
         actions_menu.addSeparator()
+        actions_menu.addAction("Extract Attachments…", self._on_extract_attachments)
         actions_menu.addAction("Detach Attachments…", self._on_detach)
+        actions_menu.addSeparator()
+        actions_menu.addAction("Backup…", self._on_backup_only)
         actions_menu.addAction("Backup && Delete…", self._on_backup_delete)
         actions_menu.addAction("Delete Selected…", self._on_delete)
 
@@ -192,9 +221,11 @@ class MainWindow(QMainWindow):
         if isinstance(acc, Account):
             self._current_account = acc
             self._fetch_folder_list()
+            self._fetch_quota()
             self._refresh_folder_panel()
             self._refresh_treemap()
             self._reload_messages()
+            self._refresh_size_label()
 
     def _fetch_folder_list(self) -> None:
         """Connect to the server and pull the folder list into the DB (no message fetch)."""
@@ -256,11 +287,14 @@ class MainWindow(QMainWindow):
             return
         assert self._current_account.id is not None
         folders = self._folder_repo.get_by_account(self._current_account.id)
-        self._folder_panel.populate(folders)
+        folder_ids = [f.id for f in folders if f.id is not None]
+        dedup_size, dedup_count = self._msg_repo.get_dedup_total_size(folder_ids) if folder_ids else (0, 0)
+        self._folder_panel.populate(folders, dedup_total=dedup_size)
 
     def _on_folder_selected(self, folder_ids: list[int]) -> None:
         self._current_folder_ids = folder_ids
         self._reload_messages()
+        self._refresh_treemap()
 
     # ── Message table ─────────────────────────────────────────────────────────
 
@@ -291,24 +325,196 @@ class MainWindow(QMainWindow):
 
     # ── Treemap ───────────────────────────────────────────────────────────────
 
+    def _get_active_folder_ids(self) -> list[int]:
+        """Return folder IDs for the current view (selected or all)."""
+        if self._current_folder_ids:
+            return self._current_folder_ids
+        if not self._current_account or not self._current_account.id:
+            return []
+        folders = self._folder_repo.get_by_account(self._current_account.id)
+        return [f.id for f in folders if f.id is not None]
+
     def _refresh_treemap(self) -> None:
         if not self._current_account:
             return
         assert self._current_account.id is not None
-        folders = self._folder_repo.get_by_account(self._current_account.id)
-        items = [
-            TreemapItem(
-                folder_id=f.id,
-                folder_name=f.name,
-                size_bytes=f.total_size_bytes,
+        mode = self._treemap.view_mode
+
+        if mode == VIEW_FOLDERS:
+            items = self._treemap_folder_items()
+
+        elif mode == VIEW_SENDERS:
+            folder_ids = self._get_active_folder_ids()
+            rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
+            items = [
+                TreemapItem(
+                    key=row["from_addr"],
+                    label=row["from_addr"].split("<")[-1].rstrip(">") if "<" in row["from_addr"] else row["from_addr"],
+                    sublabel=f"{row['message_count']} msgs",
+                    size_bytes=row["total_size_bytes"],
+                )
+                for row in rows if row["total_size_bytes"] > 0
+            ]
+
+        elif mode == VIEW_MESSAGES:
+            folder_ids = self._get_active_folder_ids()
+            messages = self._msg_repo.query_messages(
+                folder_ids=folder_ids or None,
+                order_by="size_bytes DESC",
+                limit=200,
             )
-            for f in folders if f.id is not None and f.total_size_bytes > 0
-        ]
+            # Build folder name map for sublabels
+            folder_map = self._build_folder_name_map()
+            items = [
+                TreemapItem(
+                    key=str(m.uid),
+                    label=m.subject or "(no subject)",
+                    sublabel=folder_map.get(m.folder_id, ""),
+                    size_bytes=m.size_bytes,
+                )
+                for m in messages if m.size_bytes > 0
+            ]
+
+        else:
+            items = []
+
         self._treemap.set_data(items)
 
+    def _treemap_folder_items(self) -> list[TreemapItem]:
+        """Build treemap items for Folders view with drill-down support.
+
+        - No folder selected → show top-level folders (root children)
+        - Folder selected with sub-folders → show its direct children
+        - Leaf folder selected → show top messages by size
+        """
+        assert self._current_account and self._current_account.id
+        all_folders = self._folder_repo.get_by_account(self._current_account.id)
+
+        if not self._current_folder_ids:
+            # Show top-level: group by first path component
+            return self._treemap_folder_level(all_folders, prefix="")
+
+        # A specific folder is selected — find it
+        selected = self._folder_repo.get_by_id(self._current_folder_ids[0])
+        if not selected:
+            return self._treemap_folder_level(all_folders, prefix="")
+
+        # Find direct children of this folder
+        child_items = self._treemap_folder_level(all_folders, prefix=selected.name + "/")
+
+        if child_items:
+            return child_items
+
+        # Leaf folder — show top messages by size
+        folder_map = self._build_folder_name_map()
+        messages = self._msg_repo.query_messages(
+            folder_ids=self._current_folder_ids,
+            order_by="size_bytes DESC",
+            limit=200,
+        )
+        # Tag these with "msg:" prefix so click handler knows they're messages
+        return [
+            TreemapItem(
+                key=f"msg:{m.uid}",
+                label=m.subject or "(no subject)",
+                sublabel=m.from_addr.split("<")[-1].rstrip(">") if "<" in m.from_addr else m.from_addr,
+                size_bytes=m.size_bytes,
+            )
+            for m in messages if m.size_bytes > 0
+        ]
+
+    def _treemap_folder_level(
+        self, all_folders: list[Folder], prefix: str
+    ) -> list[TreemapItem]:
+        """Return treemap items for direct children at a given folder path level.
+
+        Groups child folders that are themselves parents into a single tile
+        whose size is the sum of all descendants.
+        """
+        # Collect direct children (one level below prefix)
+        children: dict[str, list[Folder]] = {}
+        for f in all_folders:
+            if not f.name.startswith(prefix):
+                continue
+            rest = f.name[len(prefix):]
+            if not rest:
+                continue  # skip the folder itself
+            top = rest.split("/")[0]
+            children.setdefault(top, []).append(f)
+
+        items: list[TreemapItem] = []
+        for child_name, group in children.items():
+            full_path = prefix + child_name
+            total_size = sum(f.total_size_bytes for f in group)
+            total_msgs = sum(f.message_count for f in group)
+            if total_size <= 0:
+                continue
+            # Find the folder ID for this exact path (may be a namespace with no ID)
+            exact = next((f for f in group if f.name == full_path), None)
+            key = str(exact.id) if exact and exact.id is not None else f"path:{full_path}"
+            is_group = len(group) > 1 or (exact is None)
+            sublabel = f"{total_msgs:,} msgs" if total_msgs else ""
+            if is_group:
+                sublabel = f"{len(group)} sub-labels, {sublabel}" if sublabel else f"{len(group)} sub-labels"
+            items.append(TreemapItem(
+                key=key,
+                label=child_name,
+                sublabel=sublabel,
+                size_bytes=total_size,
+            ))
+        return items
+
     def _on_treemap_folder_clicked(self, folder_id: int) -> None:
+        """Handle click on a treemap tile that has a real folder_id."""
         self._current_folder_ids = [folder_id]
+        self._folder_panel.select_folder(folder_id)
         self._reload_messages()
+        self._refresh_treemap()  # drill down into this folder
+
+    def _on_treemap_folder_key_clicked(self, key: str) -> None:
+        """Handle clicks on treemap tiles with special keys (path: or msg:)."""
+        if key.startswith("msg:"):
+            # Message tile in a leaf folder drill-down
+            try:
+                uid = int(key[4:])
+                self._filter_bar.clear_filters()
+                self._reload_messages()
+                self._msg_table.select_by_uid(uid)
+            except ValueError:
+                pass
+        elif key.startswith("path:"):
+            # Namespace folder (e.g. "[Gmail]") — find a child folder to select
+            path = key[5:]
+            if self._current_account and self._current_account.id:
+                all_folders = self._folder_repo.get_by_account(self._current_account.id)
+                # Find any child folder to get its ID for selection
+                children = [f for f in all_folders
+                            if f.name.startswith(path + "/") and f.id is not None]
+                if children:
+                    # Select the namespace folder by finding its exact entry
+                    exact = next((f for f in all_folders if f.name == path and f.id is not None), None)
+                    if exact:
+                        self._current_folder_ids = [exact.id]
+                        self._folder_panel.select_folder(exact.id)
+                    else:
+                        # No exact folder — use all children as the scope
+                        self._current_folder_ids = [f.id for f in children]
+                    self._reload_messages()
+                    self._refresh_treemap()
+
+    def _on_treemap_sender_clicked(self, from_addr: str) -> None:
+        self._filter_bar.set_from_filter(from_addr)
+        self._reload_messages()
+
+    def _on_treemap_message_clicked(self, uid: int) -> None:
+        # Clear filters so the message is visible in the table, then select it
+        self._filter_bar.clear_filters()
+        self._reload_messages()
+        if not self._msg_table.select_by_uid(uid):
+            self._update_status(f"Message UID {uid} not found in current view")
+
+    def _on_treemap_view_changed(self, mode: int) -> None:
+        self._refresh_treemap()
 
     # ── Scan ──────────────────────────────────────────────────────────────────
 
@@ -416,6 +622,7 @@ class MainWindow(QMainWindow):
     def _on_scan_folder_done(self, folder: Folder) -> None:
         self._folder_panel.update_folder_size(folder.id, folder.total_size_bytes)
         self._refresh_treemap()
+        self._refresh_size_label()
 
     def _on_scan_all_done(self) -> None:
         self._progress_panel.set_done("Scan complete")
@@ -451,6 +658,44 @@ class MainWindow(QMainWindow):
         folders = self._folder_repo.get_by_account(self._current_account.id)
         return {f.id: f.name for f in folders if f.id is not None}
 
+    def _on_extract_messages(self, messages: list[Message]) -> None:
+        """Context menu handler for extract attachments."""
+        self._on_extract_attachments(messages)
+
+    def _on_extract_attachments(self, messages: list[Message] | None = None) -> None:
+        """Extract/save attachments locally without modifying messages on the server."""
+        if messages is None:
+            messages = self._get_operation_messages()
+        if not messages:
+            QMessageBox.information(self, "No Selection", "Select messages first.")
+            return
+        with_att = [m for m in messages if m.has_attachment]
+        if not with_att:
+            QMessageBox.information(self, "No Attachments", "Selected messages have no attachments.")
+            return
+
+        reply = QMessageBox.information(
+            self, "Extract Attachments",
+            f"Extract attachments from {len(with_att)} message(s)?\n"
+            f"Attachments will be saved to:\n{DEFAULT_SAVE_DIR}\n\n"
+            "Messages on the server will NOT be modified.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Ok:
+            return
+
+        assert self._current_account is not None
+        from mailsweep.workers.detach_worker import DetachWorker
+
+        worker = DetachWorker(
+            account=self._current_account,
+            messages=with_att,
+            save_dir=DEFAULT_SAVE_DIR,
+            folder_id_to_name=self._build_folder_name_map(),
+            detach_from_server=False,
+        )
+        self._run_worker(worker, "Extracting attachments…")
+
     def _on_detach(self) -> None:
         self._on_detach_messages(self._get_operation_messages())
 
@@ -483,6 +728,40 @@ class MainWindow(QMainWindow):
             folder_id_to_name=self._build_folder_name_map(),
         )
         self._run_worker(worker, "Detaching attachments…")
+
+    def _on_backup_messages_only(self, messages: list[Message]) -> None:
+        """Context menu handler for backup without delete."""
+        self._on_backup_only(messages)
+
+    def _on_backup_only(self, messages: list[Message] | None = None) -> None:
+        """Backup selected messages to .eml files without deleting from server."""
+        if messages is None:
+            messages = self._get_operation_messages()
+        if not messages:
+            QMessageBox.information(self, "No Selection", "Select messages first.")
+            return
+
+        reply = QMessageBox.information(
+            self, "Backup",
+            f"Backup {len(messages)} message(s) to .eml files?\n"
+            f"Backup directory:\n{DEFAULT_SAVE_DIR / 'backups'}\n\n"
+            "Messages on the server will NOT be deleted.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Ok:
+            return
+
+        assert self._current_account is not None
+        from mailsweep.workers.backup_worker import BackupWorker
+
+        worker = BackupWorker(
+            account=self._current_account,
+            messages=messages,
+            backup_dir=DEFAULT_SAVE_DIR / "backups",
+            folder_id_to_name=self._build_folder_name_map(),
+            delete_after=False,
+        )
+        self._run_worker(worker, "Backing up messages…")
 
     def _on_backup_delete(self) -> None:
         self._on_backup_messages(self._get_operation_messages())
@@ -588,6 +867,15 @@ class MainWindow(QMainWindow):
         if hasattr(worker, "finished"):
             worker.finished.connect(self._on_op_finished)
 
+        # Keep references to prevent garbage collection before thread runs
+        self._op_worker = worker
+        self._op_thread = thread
+
+        def _cleanup():
+            self._op_worker = None
+            self._op_thread = None
+        thread.finished.connect(_cleanup)
+
         self._progress_panel.set_running(status_msg)
         thread.start()
 
@@ -599,6 +887,7 @@ class MainWindow(QMainWindow):
         self._reload_messages()
         self._refresh_folder_panel()
         self._refresh_treemap()
+        self._refresh_size_label()
 
     # ── View Headers ──────────────────────────────────────────────────────────
 
@@ -639,6 +928,63 @@ class MainWindow(QMainWindow):
 
     def _update_status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 3000)
+
+    def _refresh_size_label(self) -> None:
+        """Update the persistent total-size / quota label in the status bar.
+
+        Shows: Google storage quota (includes Drive+Photos) | Mailbox dedup size
+        """
+        if not self._current_account or not self._current_account.id:
+            self._size_label.setText("")
+            return
+
+        hs = lambda b: human_size(b, decimals=2)
+        parts: list[str] = []
+
+        # Google/IMAP quota (total account storage including Drive, Photos)
+        if self._quota_usage is not None and self._quota_bytes and self._quota_bytes > 0:
+            pct = self._quota_usage / self._quota_bytes * 100
+            parts.append(f"Google: {hs(self._quota_usage)} / {hs(self._quota_bytes)} ({pct:.2f}%)")
+
+        # Deduplicated mailbox size (avoids Gmail label double-counting)
+        folders = self._folder_repo.get_by_account(self._current_account.id)
+        folder_ids = [f.id for f in folders if f.id is not None]
+        if folder_ids:
+            dedup_size, dedup_count = self._msg_repo.get_dedup_total_size(folder_ids)
+            if dedup_size > 0:
+                parts.append(f"Mail: {hs(dedup_size)} ({dedup_count:,} msgs)")
+
+        self._size_label.setText("  " + "  |  ".join(parts) + "  " if parts else "")
+
+    def _fetch_quota(self) -> None:
+        """Try to get IMAP QUOTA and store the limit in bytes."""
+        if not self._current_account:
+            return
+        from mailsweep.imap.connection import IMAPConnectionError, connect
+        try:
+            client = connect(self._current_account)
+            # get_quota_root returns (MailboxQuotaRoots, [Quota, ...])
+            # Quota is typically a namedtuple-like with quota_root, resource, usage, limit
+            result = client.get_quota_root("INBOX")
+            if result and len(result) >= 2:
+                quotas = result[1]  # list of Quota objects
+                for q in quotas:
+                    # q might be a tuple (root, resource, usage, limit) or have named attrs
+                    if hasattr(q, "resource") and hasattr(q, "limit"):
+                        if q.resource.upper() == "STORAGE":
+                            self._quota_usage = q.usage * 1024  # STORAGE is in KB
+                            self._quota_bytes = q.limit * 1024
+                            break
+                    elif isinstance(q, (list, tuple)) and len(q) >= 4:
+                        resource = q[1] if isinstance(q[1], str) else str(q[1])
+                        if resource.upper() == "STORAGE":
+                            self._quota_usage = int(q[2]) * 1024
+                            self._quota_bytes = int(q[3]) * 1024
+                            break
+            client.logout()
+        except Exception as exc:
+            logger.debug("Could not fetch quota: %s", exc)
+            self._quota_bytes = None
 
     def _on_about(self) -> None:
         QMessageBox.about(

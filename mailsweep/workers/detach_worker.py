@@ -35,6 +35,7 @@ class DetachWorker(QObject):
         messages: list[Message],
         save_dir: Path,
         folder_id_to_name: dict[int, str],
+        detach_from_server: bool = True,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -42,6 +43,7 @@ class DetachWorker(QObject):
         self._messages = messages
         self._save_dir = save_dir
         self._folder_id_to_name = folder_id_to_name
+        self._detach_from_server = detach_from_server
         self._cancel_requested = False
 
     def cancel(self) -> None:
@@ -103,20 +105,15 @@ class DetachWorker(QObject):
                             self.progress.emit(done, total, f"No attachments in UID {msg.uid}")
                             continue
 
-                        # Filter flags: remove system flags for APPEND
-                        append_flags = [f for f in orig_flags if f not in (b"\\Recent",)]
-
-                        # APPEND cleaned message
-                        client.append(folder_name, cleaned_bytes, append_flags, orig_date)
-
-                        # Delete original
-                        client.set_flags([msg.uid], [b"\\Deleted"])
-
-                        # EXPUNGE (UIDPLUS if available, else plain EXPUNGE)
-                        try:
-                            client.uid_expunge([msg.uid])
-                        except Exception:
-                            client.expunge()
+                        if self._detach_from_server:
+                            # Replace message on server with stripped version
+                            append_flags = [f for f in orig_flags if f not in (b"\\Recent",)]
+                            client.append(folder_name, cleaned_bytes, append_flags, orig_date)
+                            client.set_flags([msg.uid], [b"\\Deleted"])
+                            try:
+                                client.uid_expunge([msg.uid])
+                            except Exception:
+                                client.expunge()
 
                         self.message_done.emit(msg, saved_names)
 

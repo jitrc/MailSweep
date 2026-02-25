@@ -33,6 +33,7 @@ class BackupWorker(QObject):
         messages: list[Message],
         backup_dir: Path,
         folder_id_to_name: dict[int, str],
+        delete_after: bool = True,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -40,6 +41,7 @@ class BackupWorker(QObject):
         self._messages = messages
         self._backup_dir = backup_dir
         self._folder_id_to_name = folder_id_to_name
+        self._delete_after = delete_after
         self._cancel_requested = False
 
     def cancel(self) -> None:
@@ -97,12 +99,12 @@ class BackupWorker(QObject):
                         dest = dest_dir / filename
                         dest.write_bytes(raw)
 
-                        # Mark deleted + expunge
-                        client.set_flags([msg.uid], [b"\\Deleted"])
-                        try:
-                            client.uid_expunge([msg.uid])
-                        except Exception:
-                            client.expunge()
+                        if self._delete_after:
+                            client.set_flags([msg.uid], [b"\\Deleted"])
+                            try:
+                                client.uid_expunge([msg.uid])
+                            except Exception:
+                                client.expunge()
 
                         self.message_done.emit(msg, str(dest))
                         done += 1
