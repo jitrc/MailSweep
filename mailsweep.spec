@@ -1,7 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for MailSweep."""
-
-block_cipher = None
+"""PyInstaller spec for MailSweep (onefile mode)."""
 
 a = Analysis(
     ['mailsweep/main.py'],
@@ -28,20 +26,18 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
-    name='mailsweep',
+    name='MailSweep',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -51,15 +47,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='mailsweep',
 )
