@@ -201,7 +201,8 @@ class AccountDialog(QDialog):
         self._use_ssl.setChecked(account.use_ssl)
 
     def _is_gmail_host(self) -> bool:
-        return "gmail" in self._host.text().lower()
+        host = self._host.text().strip()
+        return not host or "gmail" in host.lower()
 
     def _on_auth_type_changed(self) -> None:
         auth_type = self._auth_type.currentData()

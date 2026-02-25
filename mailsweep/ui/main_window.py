@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
         tb.setMovable(False)
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
 
         tb.addWidget(QLabel("Account: "))
@@ -103,35 +105,42 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        self._scan_btn = QPushButton("Scan All")
+        self._scan_btn = QPushButton(QIcon.fromTheme("view-refresh"), "Scan All")
         self._scan_btn.clicked.connect(self._on_scan)
         tb.addWidget(self._scan_btn)
 
-        self._scan_selected_btn = QPushButton("Scan Selected Folder")
+        self._scan_selected_btn = QPushButton(QIcon.fromTheme("folder-sync"), "Scan Selected")
         self._scan_selected_btn.clicked.connect(self._on_scan_selected)
         tb.addWidget(self._scan_selected_btn)
 
-        self._extract_btn = QPushButton("Extract Attachments…")
+        tb.addSeparator()
+
+        self._extract_btn = QPushButton(QIcon.fromTheme("mail-attachment"), "Extract")
+        self._extract_btn.setToolTip("Extract Attachments")
         self._extract_btn.clicked.connect(lambda: self._on_extract_attachments())
         tb.addWidget(self._extract_btn)
 
-        self._detach_btn = QPushButton("Detach Attachments…")
+        self._detach_btn = QPushButton(QIcon.fromTheme("edit-cut"), "Detach")
+        self._detach_btn.setToolTip("Detach Attachments")
         self._detach_btn.clicked.connect(self._on_detach)
         tb.addWidget(self._detach_btn)
 
-        self._backup_btn = QPushButton("Backup…")
+        tb.addSeparator()
+
+        self._backup_btn = QPushButton(QIcon.fromTheme("document-save"), "Backup")
         self._backup_btn.clicked.connect(lambda: self._on_backup_only())
         tb.addWidget(self._backup_btn)
 
-        self._backup_delete_btn = QPushButton("Backup && Delete…")
+        self._backup_delete_btn = QPushButton(QIcon.fromTheme("document-save-all"), "Backup && Delete")
         self._backup_delete_btn.clicked.connect(self._on_backup_delete)
         tb.addWidget(self._backup_delete_btn)
 
-        self._delete_btn = QPushButton("Delete…")
+        self._delete_btn = QPushButton(QIcon.fromTheme("edit-delete"), "Delete")
         self._delete_btn.clicked.connect(self._on_delete)
         tb.addWidget(self._delete_btn)
 
-        self._move_btn = QPushButton("Move to…")
+        self._move_btn = QPushButton(QIcon.fromTheme("folder-move"), "Move to")
+        self._move_btn.setToolTip("Move to Folder")
         self._move_btn.clicked.connect(self._on_move_to_folder)
         tb.addWidget(self._move_btn)
 
