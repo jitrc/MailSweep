@@ -49,7 +49,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_from       ON messages(from_addr);
 CREATE INDEX IF NOT EXISTS idx_messages_date       ON messages(date);
 CREATE INDEX IF NOT EXISTS idx_messages_attachment ON messages(has_attachment) WHERE has_attachment=1;
 CREATE INDEX IF NOT EXISTS idx_messages_folder     ON messages(folder_id);
-CREATE INDEX IF NOT EXISTS idx_messages_msgid      ON messages(message_id);
 """
 
 
@@ -73,8 +72,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "message_id" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN message_id TEXT NOT NULL DEFAULT ''")
 
-    # Composite index for identity-based lookups (unlabelled detection, dedup)
+    # Indexes that depend on migrated columns — must run after ALTER TABLE
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_identity "
         "ON messages(from_addr, subject, date, size_bytes)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_msgid "
+        "ON messages(message_id)"
     )
