@@ -52,8 +52,88 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: dist/${{ matrix.asset_name }}
 
+  appimage:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller
+
+      - name: Build onefile executable
+        run: uv run pyinstaller mailsweep.spec
+
+      - name: Install AppImage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+
+      - name: Create AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+
+          cp dist/MailSweep AppDir/usr/bin/mailsweep
+          chmod +x AppDir/usr/bin/mailsweep
+
+          cat > AppDir/usr/share/applications/mailsweep.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=MailSweep
+          Exec=mailsweep
+          Icon=mailsweep
+          Type=Application
+          Categories=Utility;Network;Email;
+          Comment=IMAP Mailbox Analyzer & Cleaner
+          DESKTOP
+
+          cp AppDir/usr/share/applications/mailsweep.desktop AppDir/mailsweep.desktop
+
+          # Generate a simple icon
+          python3 -c "
+          from PyQt6.QtCore import QSize
+          from PyQt6.QtGui import QColor, QFont, QIcon, QImage, QPainter
+          from PyQt6.QtWidgets import QApplication
+          import sys
+          app = QApplication(sys.argv)
+          img = QImage(256, 256, QImage.Format.Format_ARGB32)
+          img.fill(QColor(0, 0, 0, 0))
+          p = QPainter(img)
+          p.setBrush(QColor(52, 120, 246))
+          p.setPen(QColor(52, 120, 246))
+          p.drawRoundedRect(16, 16, 224, 224, 40, 40)
+          p.setPen(QColor(255, 255, 255))
+          f = QFont('Sans', 120, QFont.Weight.Bold)
+          p.setFont(f)
+          p.drawText(img.rect(), 0x0084, 'M')
+          p.end()
+          img.save('AppDir/mailsweep.png')
+          img.save('AppDir/usr/share/icons/hicolor/256x256/apps/mailsweep.png')
+          " 2>/dev/null || convert -size 256x256 xc:'#3478F6' -fill white -font Helvetica-Bold -pointsize 180 -gravity center -annotate 0 'M' AppDir/mailsweep.png 2>/dev/null || touch AppDir/mailsweep.png
+
+      - name: Build AppImage
+        run: |
+          ARCH=x86_64 ./appimagetool AppDir MailSweep-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MailSweep-x86_64.AppImage
+          path: MailSweep-x86_64.AppImage
+
   release:
-    needs: build
+    needs: [build, appimage]
     runs-on: ubuntu-latest
 
     steps:
