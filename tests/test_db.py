@@ -221,3 +221,129 @@ class TestMessageRepository:
         alice = next(s for s in summary if s["from_addr"] == "alice@x.com")
         assert alice["message_count"] == 2
         assert alice["total_size_bytes"] == 3000
+
+
+class TestUnlabelled:
+    """Tests for virtual 'Unlabelled' folder feature."""
+
+    @pytest.fixture
+    def gmail_account(self, account_repo):
+        acc = Account(
+            display_name="Gmail",
+            host="imap.gmail.com",
+            port=993,
+            username="user@gmail.com",
+            auth_type=AuthType.PASSWORD,
+            use_ssl=True,
+        )
+        return account_repo.upsert(acc)
+
+    @pytest.fixture
+    def gmail_folders(self, folder_repo, gmail_account):
+        """Create INBOX, [Gmail]/All Mail, and [Gmail]/Sent Mail folders."""
+        inbox = folder_repo.upsert(Folder(account_id=gmail_account.id, name="INBOX"))
+        all_mail = folder_repo.upsert(Folder(account_id=gmail_account.id, name="[Gmail]/All Mail"))
+        sent = folder_repo.upsert(Folder(account_id=gmail_account.id, name="[Gmail]/Sent Mail"))
+        return inbox, all_mail, sent
+
+    def test_find_all_mail_folder_gmail(self, folder_repo, gmail_folders, gmail_account):
+        result = folder_repo.find_all_mail_folder(gmail_account.id)
+        assert result is not None
+        assert result.name == "[Gmail]/All Mail"
+
+    def test_find_all_mail_folder_non_gmail(self, folder_repo, sample_account):
+        """Non-Gmail account has no All Mail folder."""
+        result = folder_repo.find_all_mail_folder(sample_account.id)
+        assert result is None
+
+    def test_message_in_both_allmail_and_inbox_not_unlabelled(
+        self, msg_repo, gmail_folders,
+    ):
+        """Message appearing in both All Mail and INBOX should NOT be unlabelled."""
+        inbox, all_mail, _sent = gmail_folders
+        # Same identity tuple in both folders
+        msg_all = Message(
+            uid=1, folder_id=all_mail.id,
+            from_addr="alice@x.com", subject="Hello", date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            size_bytes=5000,
+        )
+        msg_inbox = Message(
+            uid=100, folder_id=inbox.id,
+            from_addr="alice@x.com", subject="Hello", date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            size_bytes=5000,
+        )
+        msg_repo.upsert_batch([msg_all, msg_inbox])
+
+        other_ids = [inbox.id, _sent.id]
+        count, size = msg_repo.get_unlabelled_stats(all_mail.id, other_ids)
+        assert count == 0
+        assert size == 0
+
+        messages = msg_repo.query_unlabelled_messages(all_mail.id, other_ids)
+        assert len(messages) == 0
+
+    def test_message_only_in_allmail_is_unlabelled(
+        self, msg_repo, gmail_folders,
+    ):
+        """Message only in All Mail (no copy in INBOX/Sent) IS unlabelled."""
+        inbox, all_mail, sent = gmail_folders
+        # This message only exists in All Mail
+        msg_archived = Message(
+            uid=1, folder_id=all_mail.id,
+            from_addr="bob@x.com", subject="Archived", date=datetime(2025, 2, 1, tzinfo=timezone.utc),
+            size_bytes=3000,
+        )
+        # This message exists in both All Mail and INBOX (not unlabelled)
+        msg_labelled_all = Message(
+            uid=2, folder_id=all_mail.id,
+            from_addr="carol@x.com", subject="Labelled", date=datetime(2025, 3, 1, tzinfo=timezone.utc),
+            size_bytes=2000,
+        )
+        msg_labelled_inbox = Message(
+            uid=200, folder_id=inbox.id,
+            from_addr="carol@x.com", subject="Labelled", date=datetime(2025, 3, 1, tzinfo=timezone.utc),
+            size_bytes=2000,
+        )
+        msg_repo.upsert_batch([msg_archived, msg_labelled_all, msg_labelled_inbox])
+
+        other_ids = [inbox.id, sent.id]
+        count, size = msg_repo.get_unlabelled_stats(all_mail.id, other_ids)
+        assert count == 1
+        assert size == 3000
+
+        messages = msg_repo.query_unlabelled_messages(all_mail.id, other_ids)
+        assert len(messages) == 1
+        assert messages[0].subject == "Archived"
+
+    def test_no_other_folders_returns_all(self, msg_repo, gmail_folders):
+        """When other_folder_ids is empty, all All Mail messages are 'unlabelled'."""
+        _inbox, all_mail, _sent = gmail_folders
+        msgs = [
+            Message(uid=i, folder_id=all_mail.id, from_addr=f"u{i}@x.com",
+                    subject=f"Msg {i}", size_bytes=1000 * i)
+            for i in range(1, 4)
+        ]
+        msg_repo.upsert_batch(msgs)
+
+        count, size = msg_repo.get_unlabelled_stats(all_mail.id, [])
+        assert count == 3
+        assert size == 6000
+
+        messages = msg_repo.query_unlabelled_messages(all_mail.id, [])
+        assert len(messages) == 3
+
+    def test_query_unlabelled_with_filters(self, msg_repo, gmail_folders):
+        """Filters (from, size, etc.) work on unlabelled queries."""
+        inbox, all_mail, sent = gmail_folders
+        msg_repo.upsert_batch([
+            Message(uid=1, folder_id=all_mail.id, from_addr="big@x.com",
+                    subject="Big", size_bytes=10_000),
+            Message(uid=2, folder_id=all_mail.id, from_addr="small@x.com",
+                    subject="Small", size_bytes=100),
+        ])
+        other_ids = [inbox.id, sent.id]
+        messages = msg_repo.query_unlabelled_messages(
+            all_mail.id, other_ids, size_min=5000,
+        )
+        assert len(messages) == 1
+        assert messages[0].from_addr == "big@x.com"

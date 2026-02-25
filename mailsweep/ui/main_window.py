@@ -31,7 +31,7 @@ from mailsweep.models.folder import Folder
 from mailsweep.models.message import Message
 from mailsweep.ui.account_dialog import AccountDialog
 from mailsweep.ui.filter_bar import FilterBar
-from mailsweep.ui.folder_panel import FolderPanel
+from mailsweep.ui.folder_panel import UNLABELLED_ID, FolderPanel
 from mailsweep.ui.message_table import MessageTableView
 from mailsweep.ui.progress_panel import ProgressPanel
 from mailsweep.ui.treemap_widget import (
@@ -299,7 +299,16 @@ class MainWindow(QMainWindow):
         folders = self._folder_repo.get_by_account(self._current_account.id)
         folder_ids = [f.id for f in folders if f.id is not None]
         dedup_size, dedup_count = self._msg_repo.get_dedup_total_size(folder_ids) if folder_ids else (0, 0)
-        self._folder_panel.populate(folders, dedup_total=dedup_size)
+
+        # Compute unlabelled stats for Gmail accounts
+        unlabelled_stats: tuple[int, int] | None = None
+        all_mail = self._folder_repo.find_all_mail_folder(self._current_account.id)
+        if all_mail and all_mail.id is not None:
+            other_ids = [fid for fid in folder_ids if fid != all_mail.id]
+            count, size = self._msg_repo.get_unlabelled_stats(all_mail.id, other_ids)
+            unlabelled_stats = (count, size)
+
+        self._folder_panel.populate(folders, dedup_total=dedup_size, unlabelled_stats=unlabelled_stats)
 
     def _on_folder_selected(self, folder_ids: list[int]) -> None:
         self._current_folder_ids = folder_ids
@@ -312,6 +321,8 @@ class MainWindow(QMainWindow):
     def _is_sent_folder(self, folder_ids: list[int]) -> bool:
         """Return True if ALL selected folders match common Sent folder names."""
         if not folder_ids or not self._current_account:
+            return False
+        if folder_ids == [UNLABELLED_ID]:
             return False
         for fid in folder_ids:
             folder = self._folder_repo.get_by_id(fid)
@@ -345,6 +356,14 @@ class MainWindow(QMainWindow):
             return
         assert self._current_account.id is not None
 
+        # Virtual "Unlabelled" folder
+        if self._current_folder_ids == [UNLABELLED_ID]:
+            filter_kwargs = self._filter_bar.get_filter_kwargs()
+            messages = self._query_unlabelled(**filter_kwargs)
+            self._msg_table.set_messages(messages)
+            self._update_status(f"{len(messages)} messages (unlabelled)")
+            return
+
         # Determine folder_ids filter
         if self._current_folder_ids:
             folder_ids = self._current_folder_ids
@@ -364,11 +383,24 @@ class MainWindow(QMainWindow):
     def _on_reload_cache(self) -> None:
         self._reload_messages()
 
+    def _query_unlabelled(self, **filter_kwargs) -> list[Message]:
+        """Query messages that exist only in All Mail (no other labels)."""
+        if not self._current_account or not self._current_account.id:
+            return []
+        all_mail = self._folder_repo.find_all_mail_folder(self._current_account.id)
+        if not all_mail or all_mail.id is None:
+            return []
+        folders = self._folder_repo.get_by_account(self._current_account.id)
+        other_ids = [f.id for f in folders if f.id is not None and f.id != all_mail.id]
+        return self._msg_repo.query_unlabelled_messages(
+            all_mail.id, other_ids, **filter_kwargs
+        )
+
     # ── Treemap ───────────────────────────────────────────────────────────────
 
     def _get_active_folder_ids(self) -> list[int]:
         """Return folder IDs for the current view (selected or all)."""
-        if self._current_folder_ids:
+        if self._current_folder_ids and self._current_folder_ids != [UNLABELLED_ID]:
             return self._current_folder_ids
         if not self._current_account or not self._current_account.id:
             return []
@@ -380,44 +412,68 @@ class MainWindow(QMainWindow):
             return
         assert self._current_account.id is not None
         mode = self._treemap.view_mode
+        is_unlabelled = self._current_folder_ids == [UNLABELLED_ID]
 
         if mode == VIEW_FOLDERS:
-            items = self._treemap_folder_items()
+            if is_unlabelled:
+                # No sub-folders to drill into — show top messages by size
+                messages = self._query_unlabelled(order_by="size_bytes DESC", limit=200)
+                items = [
+                    TreemapItem(
+                        key=f"msg:{m.uid}",
+                        label=m.subject or "(no subject)",
+                        sublabel=m.from_addr.split("<")[-1].rstrip(">") if m.from_addr and "<" in m.from_addr else (m.from_addr or ""),
+                        size_bytes=m.size_bytes,
+                    )
+                    for m in messages if m.size_bytes > 0
+                ]
+            else:
+                items = self._treemap_folder_items()
 
         elif mode == VIEW_SENDERS:
-            folder_ids = self._get_active_folder_ids()
-            rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
-            items = [
-                TreemapItem(
-                    key=row["sender_email"],
-                    label=row["sender_email"],
-                    sublabel=f"{row['message_count']} msgs",
-                    size_bytes=row["total_size_bytes"],
-                )
-                for row in rows if row["total_size_bytes"] > 0
-            ]
+            if is_unlabelled:
+                messages = self._query_unlabelled(order_by="size_bytes DESC", limit=5000)
+                items = self._aggregate_messages_by_field(messages, "from_addr")
+            else:
+                folder_ids = self._get_active_folder_ids()
+                rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
+                items = [
+                    TreemapItem(
+                        key=row["sender_email"],
+                        label=row["sender_email"],
+                        sublabel=f"{row['message_count']} msgs",
+                        size_bytes=row["total_size_bytes"],
+                    )
+                    for row in rows if row["total_size_bytes"] > 0
+                ]
 
         elif mode == VIEW_RECEIVERS:
-            folder_ids = self._get_active_folder_ids()
-            rows = self._msg_repo.get_receiver_summary(folder_ids=folder_ids or None)
-            items = [
-                TreemapItem(
-                    key=row["receiver_email"],
-                    label=row["receiver_email"],
-                    sublabel=f"{row['message_count']} msgs",
-                    size_bytes=row["total_size_bytes"],
-                )
-                for row in rows if row["total_size_bytes"] > 0
-            ]
+            if is_unlabelled:
+                messages = self._query_unlabelled(order_by="size_bytes DESC", limit=5000)
+                items = self._aggregate_messages_by_field(messages, "to_addr")
+            else:
+                folder_ids = self._get_active_folder_ids()
+                rows = self._msg_repo.get_receiver_summary(folder_ids=folder_ids or None)
+                items = [
+                    TreemapItem(
+                        key=row["receiver_email"],
+                        label=row["receiver_email"],
+                        sublabel=f"{row['message_count']} msgs",
+                        size_bytes=row["total_size_bytes"],
+                    )
+                    for row in rows if row["total_size_bytes"] > 0
+                ]
 
         elif mode == VIEW_MESSAGES:
-            folder_ids = self._get_active_folder_ids()
-            messages = self._msg_repo.query_messages(
-                folder_ids=folder_ids or None,
-                order_by="size_bytes DESC",
-                limit=200,
-            )
-            # Build folder name map for sublabels
+            if is_unlabelled:
+                messages = self._query_unlabelled(order_by="size_bytes DESC", limit=200)
+            else:
+                folder_ids = self._get_active_folder_ids()
+                messages = self._msg_repo.query_messages(
+                    folder_ids=folder_ids or None,
+                    order_by="size_bytes DESC",
+                    limit=200,
+                )
             folder_map = self._build_folder_name_map()
             items = [
                 TreemapItem(
@@ -433,6 +489,31 @@ class MainWindow(QMainWindow):
             items = []
 
         self._treemap.set_data(items)
+
+    def _aggregate_messages_by_field(
+        self, messages: list[Message], field: str,
+    ) -> list[TreemapItem]:
+        """Aggregate messages by a sender/receiver field for treemap display."""
+        import re
+        groups: dict[str, tuple[int, int]] = {}  # email → (count, size)
+        for m in messages:
+            addr = getattr(m, field) or ""
+            # Extract email from "Name <email>" format
+            match = re.search(r"<([^>]+)>", addr)
+            email = match.group(1).lower() if match else addr.lower()
+            count, size = groups.get(email, (0, 0))
+            groups[email] = (count + 1, size + m.size_bytes)
+        items = [
+            TreemapItem(
+                key=email,
+                label=email,
+                sublabel=f"{count} msgs",
+                size_bytes=size,
+            )
+            for email, (count, size) in groups.items() if size > 0
+        ]
+        items.sort(key=lambda x: x.size_bytes, reverse=True)
+        return items
 
     def _treemap_folder_items(self) -> list[TreemapItem]:
         """Build treemap items for Folders view with drill-down support.
@@ -619,6 +700,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "No Folder Selected",
                 "Click a folder in the tree first, then click Scan Selected Folder.",
+            )
+            return
+        if self._current_folder_ids == [UNLABELLED_ID]:
+            QMessageBox.information(
+                self, "Virtual Folder",
+                "Unlabelled is a virtual folder. Use 'Scan All' to refresh data.",
             )
             return
         if self._scan_thread and self._scan_thread.isRunning():

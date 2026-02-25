@@ -14,6 +14,7 @@ from mailsweep.utils.size_fmt import human_size
 
 FOLDER_ID_ROLE = Qt.ItemDataRole.UserRole
 ALL_FOLDERS_ID = -1  # Sentinel meaning "show all"
+UNLABELLED_ID = -2   # Sentinel for virtual "Unlabelled" folder
 
 
 class FolderPanel(QTreeWidget):
@@ -41,11 +42,18 @@ class FolderPanel(QTreeWidget):
         all_item.setFont(0, font)
         self.addTopLevelItem(all_item)
 
-    def populate(self, folders: list[Folder], dedup_total: int | None = None) -> None:
+    def populate(
+        self,
+        folders: list[Folder],
+        dedup_total: int | None = None,
+        unlabelled_stats: tuple[int, int] | None = None,
+    ) -> None:
         """Rebuild the tree from a flat list of folders.
 
         Ordering: INBOX first, then [Gmail]/* group, then everything else alpha-sorted.
         If dedup_total is given, use it for "All Folders" size (avoids double-counting).
+        If unlabelled_stats is (count, size) and count > 0, insert a virtual
+        "Unlabelled" item after "All Folders".
         """
         self.clear()
         self._add_all_item()
@@ -54,6 +62,18 @@ class FolderPanel(QTreeWidget):
         all_item = self.topLevelItem(0)
         if all_item:
             all_item.setText(1, human_size(total_size))
+
+        # Virtual "Unlabelled" item (archived-only Gmail messages)
+        if unlabelled_stats is not None:
+            count, size = unlabelled_stats
+            if count > 0:
+                label = f"Unlabelled ({count:,})"
+                item = QTreeWidgetItem([label, human_size(size)])
+                item.setData(0, FOLDER_ID_ROLE, UNLABELLED_ID)
+                font = QFont()
+                font.setItalic(True)
+                item.setFont(0, font)
+                self.addTopLevelItem(item)
 
         # Partition into 3 buckets
         inbox: list[Folder] = []
@@ -106,6 +126,8 @@ class FolderPanel(QTreeWidget):
         fid = item.data(0, FOLDER_ID_ROLE)
         if fid == ALL_FOLDERS_ID:
             self.folder_selected.emit([])
+        elif fid == UNLABELLED_ID:
+            self.folder_selected.emit([UNLABELLED_ID])
         elif fid is not None:
             self.folder_selected.emit([fid])
         # Intermediate nodes (None) do nothing

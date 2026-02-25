@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS messages (
     uid              INTEGER NOT NULL,
     folder_id        INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
     from_addr        TEXT,
+    to_addr          TEXT,
     subject          TEXT,
     date             TEXT,
     size_bytes       INTEGER NOT NULL DEFAULT 0,
@@ -57,5 +58,19 @@ def init_db(path: str | Path = ":memory:") -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA_SQL)
+    _migrate(conn)
     conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply incremental schema migrations for existing databases."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+    if "to_addr" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN to_addr TEXT")
+
+    # Composite index for identity-based lookups (unlabelled detection, dedup)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_identity "
+        "ON messages(from_addr, subject, date, size_bytes)"
+    )

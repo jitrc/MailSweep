@@ -150,6 +150,18 @@ class FolderRepository:
                 (folder_id,),
             )
 
+    _ALL_MAIL_NAMES = {"[gmail]/all mail", "[google mail]/all mail"}
+
+    def find_all_mail_folder(self, account_id: int) -> Folder | None:
+        """Return the Gmail 'All Mail' folder, or None for non-Gmail accounts."""
+        rows = self._conn.execute(
+            "SELECT * FROM folders WHERE account_id = ?", (account_id,)
+        ).fetchall()
+        for row in rows:
+            if row["name"].lower() in self._ALL_MAIL_NAMES:
+                return self._row_to_folder(row)
+        return None
+
     def _row_to_folder(self, row: sqlite3.Row) -> Folder:
         return Folder(
             id=row["id"],
@@ -396,3 +408,119 @@ class MessageRepository:
         """
         row = self._conn.execute(sql, params).fetchone()
         return (row[0], row[1]) if row else (0, 0)
+
+    # ── Unlabelled (archived-only) queries ─────────────────────────────────
+
+    def _unlabelled_not_exists(self, other_folder_ids: list[int]) -> tuple[str, list[Any]]:
+        """Return (SQL fragment, params) for the NOT EXISTS subquery."""
+        placeholders = ",".join("?" * len(other_folder_ids))
+        fragment = (
+            "NOT EXISTS ("
+            "  SELECT 1 FROM messages o"
+            f"  WHERE o.folder_id IN ({placeholders})"
+            "    AND o.from_addr IS m.from_addr"
+            "    AND o.subject   IS m.subject"
+            "    AND o.date      IS m.date"
+            "    AND o.size_bytes = m.size_bytes"
+            ")"
+        )
+        return fragment, list(other_folder_ids)
+
+    def get_unlabelled_stats(
+        self,
+        all_mail_folder_id: int,
+        other_folder_ids: list[int],
+    ) -> tuple[int, int]:
+        """Return (count, total_size) of messages only in All Mail (no labels).
+
+        If other_folder_ids is empty, all All Mail messages are "unlabelled".
+        """
+        if not other_folder_ids:
+            row = self._conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) "
+                "FROM messages WHERE folder_id = ?",
+                (all_mail_folder_id,),
+            ).fetchone()
+            return (row[0], row[1]) if row else (0, 0)
+
+        not_exists, ne_params = self._unlabelled_not_exists(other_folder_ids)
+        sql = (
+            "SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) "
+            f"FROM messages m WHERE m.folder_id = ? AND {not_exists}"
+        )
+        row = self._conn.execute(sql, [all_mail_folder_id, *ne_params]).fetchone()
+        return (row[0], row[1]) if row else (0, 0)
+
+    def query_unlabelled_messages(
+        self,
+        all_mail_folder_id: int,
+        other_folder_ids: list[int],
+        from_filter: str = "",
+        to_filter: str = "",
+        subject_filter: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        size_min: int = 0,
+        size_max: int = 0,
+        has_attachment: bool | None = None,
+        order_by: str = "size_bytes DESC",
+        limit: int = 5000,
+    ) -> list[Message]:
+        """Query messages that exist only in All Mail (no other labels)."""
+        clauses: list[str] = ["m.folder_id = ?"]
+        params: list[Any] = [all_mail_folder_id]
+
+        if other_folder_ids:
+            not_exists, ne_params = self._unlabelled_not_exists(other_folder_ids)
+            clauses.append(not_exists)
+            params.extend(ne_params)
+
+        if from_filter:
+            clauses.append("LOWER(m.from_addr) LIKE ?")
+            params.append(f"%{from_filter.lower()}%")
+        if to_filter:
+            clauses.append("LOWER(m.to_addr) LIKE ?")
+            params.append(f"%{to_filter.lower()}%")
+        if subject_filter:
+            clauses.append("LOWER(m.subject) LIKE ?")
+            params.append(f"%{subject_filter.lower()}%")
+        if date_from:
+            clauses.append("m.date >= ?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("m.date <= ?")
+            params.append(date_to)
+        if size_min > 0:
+            clauses.append("m.size_bytes >= ?")
+            params.append(size_min)
+        if size_max > 0:
+            clauses.append("m.size_bytes <= ?")
+            params.append(size_max)
+        if has_attachment is True:
+            clauses.append("m.has_attachment = 1")
+        elif has_attachment is False:
+            clauses.append("m.has_attachment = 0")
+
+        where = "WHERE " + " AND ".join(clauses)
+
+        allowed_order = {
+            "size_bytes DESC", "size_bytes ASC",
+            "date DESC", "date ASC",
+            "from_addr ASC", "from_addr DESC",
+            "to_addr ASC", "to_addr DESC",
+            "subject ASC",
+        }
+        if order_by not in allowed_order:
+            order_by = "size_bytes DESC"
+
+        sql = f"""
+            SELECT m.*, f.name AS folder_name
+            FROM messages m
+            JOIN folders f ON f.id = m.folder_id
+            {where}
+            ORDER BY m.{order_by}
+            LIMIT ?
+        """
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [Message.from_row(dict(r)) for r in rows]
