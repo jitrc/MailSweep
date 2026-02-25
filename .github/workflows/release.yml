@@ -133,6 +133,16 @@ jobs:
 
           cp AppDir/usr/share/applications/mailsweep.desktop AppDir/mailsweep.desktop
 
+          # Create AppRun entry point
+          cat > AppDir/AppRun << 'APPRUN'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          exec "${HERE}/usr/bin/mailsweep" "$@"
+          APPRUN
+          sed -i 's/^[[:space:]]*//' AppDir/AppRun
+          chmod +x AppDir/AppRun
+
           # Generate a simple icon
           python3 -c "
           from PyQt6.QtCore import QSize
