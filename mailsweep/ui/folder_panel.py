@@ -94,7 +94,7 @@ class FolderPanel(QTreeWidget):
         items_by_path: dict[str, QTreeWidgetItem] = {}
 
         for folder in ordered:
-            parts = folder.name.replace(".", "/").split("/")
+            parts = folder.name.split("/")
             parent_item: QTreeWidgetItem | QTreeWidget = self
 
             for depth, part in enumerate(parts):
