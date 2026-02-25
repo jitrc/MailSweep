@@ -37,6 +37,7 @@ from mailsweep.ui.progress_panel import ProgressPanel
 from mailsweep.ui.treemap_widget import (
     VIEW_FOLDERS,
     VIEW_MESSAGES,
+    VIEW_RECEIVERS,
     VIEW_SENDERS,
     TreemapItem,
     TreemapWidget,
@@ -66,7 +67,11 @@ class MainWindow(QMainWindow):
         self._scan_worker: QtScanWorker | None = None
         self._op_thread: QThread | None = None
         self._op_worker: object | None = None
+        self._op_processed: dict[int, list[int]] = {}  # folder_id → [uids]
+        self._op_needs_rescan = False
+        self._op_updates_cache = False
         self._is_closing = False
+        self._folder_show_to: dict[tuple[int, ...], bool] = {}  # folder_ids → show_to
 
         self._build_ui()
         self._load_accounts()
@@ -150,12 +155,14 @@ class MainWindow(QMainWindow):
         self._msg_table.backup_delete_requested.connect(self._on_backup_messages)
         self._msg_table.delete_requested.connect(self._on_delete_messages)
         self._msg_table.view_headers_requested.connect(self._on_view_headers)
+        self._msg_table.show_to_toggled.connect(self._on_show_to_toggled)
         v_splitter.addWidget(self._msg_table)
 
         self._treemap = TreemapWidget()
         self._treemap.folder_clicked.connect(self._on_treemap_folder_clicked)
         self._treemap.folder_key_clicked.connect(self._on_treemap_folder_key_clicked)
         self._treemap.sender_clicked.connect(self._on_treemap_sender_clicked)
+        self._treemap.receiver_clicked.connect(self._on_treemap_receiver_clicked)
         self._treemap.message_clicked.connect(self._on_treemap_message_clicked)
         self._treemap.view_mode_changed.connect(self._on_treemap_view_changed)
         v_splitter.addWidget(self._treemap)
@@ -228,6 +235,7 @@ class MainWindow(QMainWindow):
             self._refresh_treemap()
             self._reload_messages()
             self._refresh_size_label()
+            self._update_correspondent_column()
 
     def _fetch_folder_list(self) -> None:
         """Connect to the server and pull the folder list into the DB (no message fetch)."""
@@ -295,8 +303,39 @@ class MainWindow(QMainWindow):
 
     def _on_folder_selected(self, folder_ids: list[int]) -> None:
         self._current_folder_ids = folder_ids
+        self._update_correspondent_column()
         self._reload_messages()
         self._refresh_treemap()
+
+    _SENT_NAMES = {"sent", "sent mail", "sent items"}
+
+    def _is_sent_folder(self, folder_ids: list[int]) -> bool:
+        """Return True if ALL selected folders match common Sent folder names."""
+        if not folder_ids or not self._current_account:
+            return False
+        for fid in folder_ids:
+            folder = self._folder_repo.get_by_id(fid)
+            if not folder:
+                return False
+            # Check the leaf name (last path component) and full name
+            name_lower = folder.name.lower()
+            leaf = name_lower.rsplit("/", 1)[-1]
+            if leaf not in self._SENT_NAMES and name_lower not in self._SENT_NAMES:
+                return False
+        return True
+
+    def _update_correspondent_column(self) -> None:
+        key = tuple(sorted(self._current_folder_ids))
+        if key in self._folder_show_to:
+            show_to = self._folder_show_to[key]
+        else:
+            show_to = self._is_sent_folder(self._current_folder_ids)
+        self._msg_table.set_show_to(show_to)
+
+    def _on_show_to_toggled(self, show_to: bool) -> None:
+        """Remember the user's manual From/To choice for the current folder."""
+        key = tuple(sorted(self._current_folder_ids))
+        self._folder_show_to[key] = show_to
 
     # ── Message table ─────────────────────────────────────────────────────────
 
@@ -352,6 +391,19 @@ class MainWindow(QMainWindow):
                 TreemapItem(
                     key=row["sender_email"],
                     label=row["sender_email"],
+                    sublabel=f"{row['message_count']} msgs",
+                    size_bytes=row["total_size_bytes"],
+                )
+                for row in rows if row["total_size_bytes"] > 0
+            ]
+
+        elif mode == VIEW_RECEIVERS:
+            folder_ids = self._get_active_folder_ids()
+            rows = self._msg_repo.get_receiver_summary(folder_ids=folder_ids or None)
+            items = [
+                TreemapItem(
+                    key=row["receiver_email"],
+                    label=row["receiver_email"],
                     sublabel=f"{row['message_count']} msgs",
                     size_bytes=row["total_size_bytes"],
                 )
@@ -506,6 +558,10 @@ class MainWindow(QMainWindow):
 
     def _on_treemap_sender_clicked(self, from_addr: str) -> None:
         self._filter_bar.set_from_filter(from_addr)
+        self._reload_messages()
+
+    def _on_treemap_receiver_clicked(self, to_addr: str) -> None:
+        self._filter_bar.set_to_filter(to_addr)
         self._reload_messages()
 
     def _on_treemap_message_clicked(self, uid: int) -> None:
@@ -729,7 +785,7 @@ class MainWindow(QMainWindow):
             save_dir=cfg.DEFAULT_SAVE_DIR,
             folder_id_to_name=self._build_folder_name_map(),
         )
-        self._run_worker(worker, "Detaching attachments…")
+        self._run_worker(worker, "Detaching attachments…", needs_rescan=True, updates_cache=True)
 
     def _on_backup_messages_only(self, messages: list[Message]) -> None:
         """Context menu handler for backup without delete."""
@@ -792,7 +848,7 @@ class MainWindow(QMainWindow):
             backup_dir=cfg.DEFAULT_SAVE_DIR / "backups",
             folder_id_to_name=self._build_folder_name_map(),
         )
-        self._run_worker(worker, "Backing up and deleting…")
+        self._run_worker(worker, "Backing up and deleting…", updates_cache=True)
 
     def _on_delete(self) -> None:
         self._on_delete_messages(self._get_operation_messages())
@@ -826,10 +882,16 @@ class MainWindow(QMainWindow):
             messages=messages,
             folder_id_to_name=folder_map,
         )
-        self._run_worker(worker, f"Deleting {len(messages)} messages…")
+        self._run_worker(worker, f"Deleting {len(messages)} messages…", updates_cache=True)
 
-    def _run_worker(self, worker, status_msg: str) -> None:
+    def _run_worker(
+        self, worker, status_msg: str, *,
+        needs_rescan: bool = False, updates_cache: bool = False,
+    ) -> None:
         """Wire a generic QObject worker to a QThread and start it."""
+        self._op_processed = {}
+        self._op_needs_rescan = needs_rescan
+        self._op_updates_cache = updates_cache
         thread = QThread(self)
         worker.moveToThread(thread)
 
@@ -863,12 +925,33 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_op_message_done(self, msg, result) -> None:
+        if self._op_updates_cache:
+            self._op_processed.setdefault(msg.folder_id, []).append(msg.uid)
         logger.info("Operation done for message uid=%s: %s", msg.uid, result)
 
     def _on_op_finished(self) -> None:
         if self._is_closing:
             return
         self._progress_panel.set_done("Operation complete")
+
+        # Remove processed UIDs from cache and recompute folder stats
+        affected_folder_ids = list(self._op_processed.keys())
+        if self._op_updates_cache and affected_folder_ids:
+            for folder_id, uids in self._op_processed.items():
+                self._msg_repo.delete_uids(folder_id, uids)
+                self._folder_repo.update_stats(folder_id)
+        self._op_processed = {}
+
+        if self._op_needs_rescan and affected_folder_ids:
+            # Detach APPENDs replacement messages — rescan to pick up new UIDs
+            folders = [
+                f for fid in affected_folder_ids
+                if (f := self._folder_repo.get_by_id(fid)) is not None
+            ]
+            if folders:
+                self._start_scan(folders)
+                return  # _on_scan_all_done will refresh UI
+
         self._reload_messages()
         self._refresh_folder_panel()
         self._refresh_treemap()
@@ -888,6 +971,7 @@ class MainWindow(QMainWindow):
             f"UID: {msg.uid}\n"
             f"Folder: {msg.folder_name}\n"
             f"From: {msg.from_addr}\n"
+            f"To: {msg.to_addr}\n"
             f"Subject: {msg.subject}\n"
             f"Date: {msg.date}\n"
             f"Size: {human_size(msg.size_bytes)}\n"

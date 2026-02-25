@@ -48,6 +48,7 @@ class TreemapItem(NamedTuple):
 VIEW_FOLDERS = 0
 VIEW_SENDERS = 1
 VIEW_MESSAGES = 2
+VIEW_RECEIVERS = 3
 
 
 class _TreemapCanvas(QWidget):
@@ -207,8 +208,9 @@ class TreemapWidget(QWidget):
     folder_clicked = pyqtSignal(int)     # folder_id
     folder_key_clicked = pyqtSignal(str) # raw key (folder_id, "path:...", or "msg:...")
     sender_clicked = pyqtSignal(str)     # from_addr
+    receiver_clicked = pyqtSignal(str)   # to_addr
     message_clicked = pyqtSignal(int)    # message uid
-    view_mode_changed = pyqtSignal(int)  # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES
+    view_mode_changed = pyqtSignal(int)  # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES / VIEW_RECEIVERS
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -225,6 +227,7 @@ class TreemapWidget(QWidget):
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("Folders", VIEW_FOLDERS)
         self._mode_combo.addItem("Senders", VIEW_SENDERS)
+        self._mode_combo.addItem("Receivers", VIEW_RECEIVERS)
         self._mode_combo.addItem("Messages", VIEW_MESSAGES)
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self._mode_combo.setFixedWidth(120)
@@ -249,6 +252,8 @@ class TreemapWidget(QWidget):
                 pass
         elif self._view_mode == VIEW_SENDERS:
             self.sender_clicked.emit(key)
+        elif self._view_mode == VIEW_RECEIVERS:
+            self.receiver_clicked.emit(key)
         elif self._view_mode == VIEW_MESSAGES:
             try:
                 self.message_clicked.emit(int(key))

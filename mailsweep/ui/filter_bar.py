@@ -35,6 +35,12 @@ class FilterBar(QWidget):
         self._from_edit.setFixedWidth(140)
         layout.addWidget(self._from_edit)
 
+        layout.addWidget(QLabel("To:"))
+        self._to_edit = QLineEdit()
+        self._to_edit.setPlaceholderText("recipient")
+        self._to_edit.setFixedWidth(140)
+        layout.addWidget(self._to_edit)
+
         layout.addWidget(QLabel("Subject:"))
         self._subject_edit = QLineEdit()
         self._subject_edit.setPlaceholderText("keyword")
@@ -48,7 +54,7 @@ class FilterBar(QWidget):
         self._date_from.setFixedWidth(110)
         layout.addWidget(self._date_from)
 
-        layout.addWidget(QLabel("To:"))
+        layout.addWidget(QLabel("–"))
         self._date_to = QDateEdit()
         self._date_to.setCalendarPopup(True)
         self._date_to.setDate(QDate.currentDate())
@@ -86,6 +92,7 @@ class FilterBar(QWidget):
 
         # Apply on Enter in text fields
         self._from_edit.returnPressed.connect(self._emit_filter)
+        self._to_edit.returnPressed.connect(self._emit_filter)
         self._subject_edit.returnPressed.connect(self._emit_filter)
 
     def _emit_filter(self) -> None:
@@ -94,6 +101,10 @@ class FilterBar(QWidget):
         from_text = self._from_edit.text().strip()
         if from_text:
             kwargs["from_filter"] = from_text
+
+        to_text = self._to_edit.text().strip()
+        if to_text:
+            kwargs["to_filter"] = to_text
 
         subject_text = self._subject_edit.text().strip()
         if subject_text:
@@ -123,6 +134,7 @@ class FilterBar(QWidget):
     def clear_filters(self) -> None:
         """Reset all filter fields without emitting a signal."""
         self._from_edit.clear()
+        self._to_edit.clear()
         self._subject_edit.clear()
         self._date_from.setDate(QDate(2000, 1, 1))
         self._date_to.setDate(QDate.currentDate())
@@ -139,12 +151,20 @@ class FilterBar(QWidget):
         self._from_edit.setText(from_addr)
         self._emit_filter()
 
+    def set_to_filter(self, to_addr: str) -> None:
+        """Set the To field and trigger a filter update."""
+        self._to_edit.setText(to_addr)
+        self._emit_filter()
+
     def get_filter_kwargs(self) -> dict:
         """Return current filter parameters without emitting signal."""
         kwargs: dict = {}
         from_text = self._from_edit.text().strip()
         if from_text:
             kwargs["from_filter"] = from_text
+        to_text = self._to_edit.text().strip()
+        if to_text:
+            kwargs["to_filter"] = to_text
         subject_text = self._subject_edit.text().strip()
         if subject_text:
             kwargs["subject_filter"] = subject_text

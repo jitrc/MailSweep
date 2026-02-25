@@ -176,11 +176,12 @@ class MessageRepository:
             self._conn.executemany(
                 """
                 INSERT INTO messages
-                    (uid, folder_id, from_addr, subject, date, size_bytes,
+                    (uid, folder_id, from_addr, to_addr, subject, date, size_bytes,
                      has_attachment, attachment_names, flags, cached_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(uid, folder_id) DO UPDATE SET
                     from_addr        = excluded.from_addr,
+                    to_addr          = excluded.to_addr,
                     subject          = excluded.subject,
                     date             = excluded.date,
                     size_bytes       = excluded.size_bytes,
@@ -192,7 +193,7 @@ class MessageRepository:
                 [
                     (
                         m.uid, m.folder_id,
-                        m.from_addr, m.subject,
+                        m.from_addr, m.to_addr, m.subject,
                         m.date.isoformat() if m.date else None,
                         m.size_bytes, int(m.has_attachment),
                         m.attachment_names_json, m.flags_json, now,
@@ -221,6 +222,7 @@ class MessageRepository:
         self,
         folder_ids: list[int] | None = None,
         from_filter: str = "",
+        to_filter: str = "",
         subject_filter: str = "",
         date_from: str = "",
         date_to: str = "",
@@ -241,6 +243,10 @@ class MessageRepository:
         if from_filter:
             clauses.append("LOWER(m.from_addr) LIKE ?")
             params.append(f"%{from_filter.lower()}%")
+
+        if to_filter:
+            clauses.append("LOWER(m.to_addr) LIKE ?")
+            params.append(f"%{to_filter.lower()}%")
 
         if subject_filter:
             clauses.append("LOWER(m.subject) LIKE ?")
@@ -274,6 +280,7 @@ class MessageRepository:
             "size_bytes DESC", "size_bytes ASC",
             "date DESC", "date ASC",
             "from_addr ASC", "from_addr DESC",
+            "to_addr ASC", "to_addr DESC",
             "subject ASC",
         }
         if order_by not in allowed_order:
@@ -322,6 +329,40 @@ class MessageRepository:
             FROM messages
             {where}
             GROUP BY sender_email
+            ORDER BY total_size_bytes DESC
+            LIMIT 1000
+        """
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_receiver_summary(
+        self, folder_ids: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return per-receiver aggregation grouped by email address.
+
+        Same extraction logic as get_sender_summary but on to_addr.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if folder_ids:
+            placeholders = ",".join("?" * len(folder_ids))
+            clauses.append(f"folder_id IN ({placeholders})")
+            params.extend(folder_ids)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        sql = f"""
+            SELECT
+                CASE WHEN INSTR(to_addr, '<') > 0
+                     THEN LOWER(SUBSTR(to_addr,
+                                       INSTR(to_addr, '<') + 1,
+                                       INSTR(to_addr, '>') - INSTR(to_addr, '<') - 1))
+                     ELSE LOWER(to_addr)
+                END AS receiver_email,
+                to_addr,
+                COUNT(*)        AS message_count,
+                SUM(size_bytes) AS total_size_bytes
+            FROM messages
+            {where}
+            GROUP BY receiver_email
             ORDER BY total_size_bytes DESC
             LIMIT 1000
         """

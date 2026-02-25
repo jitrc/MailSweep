@@ -22,7 +22,7 @@ from mailsweep.utils.size_fmt import human_size
 
 COLUMNS = ["", "From", "Subject", "Date", "Size", "Folder", "Attachments"]
 COL_CHECK = 0
-COL_FROM = 1
+COL_CORRESPONDENT = 1
 COL_SUBJECT = 2
 COL_DATE = 3
 COL_SIZE = 4
@@ -37,6 +37,7 @@ class MessageTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._messages: list[Message] = []
         self._checked: set[int] = set()  # indices
+        self._show_to: bool = False
 
     # ── QAbstractTableModel interface ─────────────────────────────────────────
 
@@ -48,6 +49,8 @@ class MessageTableModel(QAbstractTableModel):
 
     def headerData(self, section: int, orientation: Qt.Orientation, role=Qt.ItemDataRole.DisplayRole):
         if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
+            if section == COL_CORRESPONDENT:
+                return "To" if self._show_to else "From"
             return COLUMNS[section]
         return None
 
@@ -160,12 +163,26 @@ class MessageTableModel(QAbstractTableModel):
 
     # ── Private ────────────────────────────────────────────────────────────────
 
+    def set_show_to(self, show_to: bool) -> None:
+        """Switch the correspondent column between From and To display."""
+        if show_to == self._show_to:
+            return
+        self._show_to = show_to
+        self.headerDataChanged.emit(
+            Qt.Orientation.Horizontal, COL_CORRESPONDENT, COL_CORRESPONDENT,
+        )
+        if self._messages:
+            self.dataChanged.emit(
+                self.index(0, COL_CORRESPONDENT),
+                self.index(len(self._messages) - 1, COL_CORRESPONDENT),
+            )
+
     def _display_data(self, msg: Message, col: int) -> str:
         match col:
             case 0:
                 return ""
             case 1:
-                return msg.from_addr or ""
+                return (msg.to_addr or "") if self._show_to else (msg.from_addr or "")
             case 2:
                 return msg.subject or ""
             case 3:
@@ -193,6 +210,7 @@ class MessageTableView(QTableView):
     backup_delete_requested = pyqtSignal(list)  # list[Message]
     delete_requested = pyqtSignal(list)     # list[Message]
     view_headers_requested = pyqtSignal(object)  # Message
+    show_to_toggled = pyqtSignal(bool)      # emitted on manual header toggle
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -205,6 +223,7 @@ class MessageTableView(QTableView):
 
         self._configure_view()
         self._build_context_menu()
+        self._build_header_context_menu()
 
     def _configure_view(self) -> None:
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -217,8 +236,8 @@ class MessageTableView(QTableView):
         hh = self.horizontalHeader()
         hh.setSectionResizeMode(COL_CHECK, QHeaderView.ResizeMode.Fixed)
         hh.resizeSection(COL_CHECK, 28)
-        hh.setSectionResizeMode(COL_FROM, QHeaderView.ResizeMode.Interactive)
-        hh.resizeSection(COL_FROM, 200)
+        hh.setSectionResizeMode(COL_CORRESPONDENT, QHeaderView.ResizeMode.Interactive)
+        hh.resizeSection(COL_CORRESPONDENT, 200)
         hh.setSectionResizeMode(COL_SUBJECT, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(COL_DATE, QHeaderView.ResizeMode.Fixed)
         hh.resizeSection(COL_DATE, 90)
@@ -228,6 +247,28 @@ class MessageTableView(QTableView):
         hh.resizeSection(COL_FOLDER, 130)
         hh.setSectionResizeMode(COL_ATTACHMENTS, QHeaderView.ResizeMode.Interactive)
         hh.resizeSection(COL_ATTACHMENTS, 160)
+
+    def _build_header_context_menu(self) -> None:
+        hh = self.horizontalHeader()
+        hh.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        hh.customContextMenuRequested.connect(self._show_header_context_menu)
+
+    def _show_header_context_menu(self, pos) -> None:
+        col = self.horizontalHeader().logicalIndexAt(pos)
+        if col != COL_CORRESPONDENT:
+            return
+        menu = QMenu(self)
+        show_from = QAction("Show From", self)
+        show_to = QAction("Show To", self)
+        show_from.setCheckable(True)
+        show_to.setCheckable(True)
+        show_from.setChecked(not self._model._show_to)
+        show_to.setChecked(self._model._show_to)
+        show_from.triggered.connect(lambda: self._manual_toggle(False))
+        show_to.triggered.connect(lambda: self._manual_toggle(True))
+        menu.addAction(show_from)
+        menu.addAction(show_to)
+        menu.exec(self.horizontalHeader().viewport().mapToGlobal(pos))
 
     def _build_context_menu(self) -> None:
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -293,6 +334,15 @@ class MessageTableView(QTableView):
                 self.scrollTo(idx, QAbstractItemView.ScrollHint.PositionAtCenter)
                 return True
         return False
+
+    def set_show_to(self, show_to: bool) -> None:
+        """Toggle the correspondent column between From and To."""
+        self._model.set_show_to(show_to)
+
+    def _manual_toggle(self, show_to: bool) -> None:
+        """User toggled via header context menu — apply and notify."""
+        self.set_show_to(show_to)
+        self.show_to_toggled.emit(show_to)
 
     def clear(self) -> None:
         self._model.clear()
