@@ -144,6 +144,15 @@ class MainWindow(QMainWindow):
         self._move_btn.clicked.connect(self._on_move_to_folder)
         tb.addWidget(self._move_btn)
 
+        tb.addSeparator()
+
+        _sparkle_svg = Path(__file__).resolve().parent.parent / "resources" / "sparkle.svg"
+        _ai_icon = QIcon(str(_sparkle_svg)) if _sparkle_svg.exists() else QIcon.fromTheme("help-hint")
+        self._ai_btn = QPushButton(_ai_icon, "AI Assistant")
+        self._ai_btn.setToolTip("Show AI Assistant")
+        self._ai_btn.clicked.connect(self._show_ai_dock)
+        tb.addWidget(self._ai_btn)
+
     def _build_central_widget(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)

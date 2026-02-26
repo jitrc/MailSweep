@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import re
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 
 from typing import NamedTuple
 
-from mailsweep.ai.providers import PROVIDER_PRESETS
+from mailsweep.ai.providers import PROVIDER_MODELS, PROVIDER_PRESETS, fetch_model_list
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +71,20 @@ class AiDockWidget(QDockWidget):
         provider_row = QHBoxLayout()
         provider_row.addWidget(QLabel("Provider:"))
         self._provider_combo = QComboBox()
-        self._provider_combo.addItems(["ollama", "openai", "anthropic", "custom"])
+        self._provider_combo.addItems(["ollama", "lm-studio", "openai", "anthropic", "custom"])
         self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
         provider_row.addWidget(self._provider_combo)
 
         provider_row.addWidget(QLabel("Model:"))
-        self._model_edit = QLineEdit()
-        self._model_edit.setPlaceholderText("e.g. llama3.2")
-        self._model_edit.setMinimumWidth(120)
-        provider_row.addWidget(self._model_edit)
+        self._model_combo = QComboBox()
+        self._model_combo.setEditable(True)
+        self._model_combo.setMinimumWidth(250)
+        provider_row.addWidget(self._model_combo)
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setToolTip("Fetch available models from server")
+        self._refresh_btn.setMaximumWidth(60)
+        self._refresh_btn.clicked.connect(self._on_refresh_models)
+        provider_row.addWidget(self._refresh_btn)
         layout.addLayout(provider_row)
 
         url_key_row = QHBoxLayout()
@@ -145,7 +150,8 @@ class AiDockWidget(QDockWidget):
         if idx >= 0:
             self._provider_combo.setCurrentIndex(idx)
         self._url_edit.setText(cfg.AI_BASE_URL)
-        self._model_edit.setText(cfg.AI_MODEL)
+        self._populate_model_combo(cfg.AI_PROVIDER)
+        self._model_combo.setCurrentText(cfg.AI_MODEL)
         if cfg.AI_API_KEY:
             self._key_edit.setText(cfg.AI_API_KEY)
         self._update_key_visibility()
@@ -154,14 +160,62 @@ class AiDockWidget(QDockWidget):
         preset = PROVIDER_PRESETS.get(provider, {})
         if preset.get("base_url"):
             self._url_edit.setText(preset["base_url"])
+        self._populate_model_combo(provider)
         if preset.get("model"):
-            self._model_edit.setText(preset["model"])
+            self._model_combo.setCurrentText(preset["model"])
         self._update_key_visibility()
 
+    def _populate_model_combo(self, provider: str) -> None:
+        self._model_combo.clear()
+        models = PROVIDER_MODELS.get(provider, [])
+        if models:
+            self._model_combo.addItems(models)
+
     def _update_key_visibility(self) -> None:
-        hide = self._provider_combo.currentText() == "ollama"
+        hide = self._provider_combo.currentText() in ("ollama", "lm-studio")
         self._key_label.setVisible(not hide)
         self._key_edit.setVisible(not hide)
+
+    def _on_refresh_models(self) -> None:
+        base_url = self._url_edit.text().strip()
+        api_key = self._key_edit.text().strip()
+        if not base_url:
+            return
+        self._refresh_btn.setEnabled(False)
+        self._refresh_btn.setText("…")
+
+        class _Fetcher(QObject):
+            done = pyqtSignal(list)
+            def __init__(self, url, key):
+                super().__init__()
+                self._url = url
+                self._key = key
+            def run(self):
+                self.done.emit(fetch_model_list(self._url, self._key))
+
+        thread = QThread(self)
+        worker = _Fetcher(base_url, api_key)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(lambda models: self._on_models_fetched(models))
+        worker.done.connect(thread.quit)
+        worker.done.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._refresh_thread = thread
+        self._refresh_worker = worker
+        thread.start()
+
+    def _on_models_fetched(self, models: list[str]) -> None:
+        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setText("Refresh")
+        if not models:
+            return
+        current = self._model_combo.currentText()
+        existing = {self._model_combo.itemText(i) for i in range(self._model_combo.count())}
+        for m in models:
+            if m not in existing:
+                self._model_combo.addItem(m)
+        self._model_combo.setCurrentText(current)
 
     def set_context(self, context: str) -> None:
         """Set the DB context string (called by main_window)."""
@@ -182,7 +236,7 @@ class AiDockWidget(QDockWidget):
         provider = self._provider_combo.currentText()
         base_url = self._url_edit.text().strip()
         api_key = self._key_edit.text().strip()
-        model = self._model_edit.text().strip()
+        model = self._model_combo.currentText().strip()
 
         if not model:
             self._append_chat("system", "Please set a model name first.")

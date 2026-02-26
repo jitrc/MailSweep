@@ -115,11 +115,39 @@ class AnthropicProvider(LLMProvider):
 # ── Provider presets ─────────────────────────────────────────────────────────
 
 PROVIDER_PRESETS = {
-    "ollama": {"base_url": "http://localhost:11434/v1", "api_key": "", "model": "llama3.2"},
-    "openai": {"base_url": "https://api.openai.com/v1", "api_key": "", "model": "gpt-4o-mini"},
-    "anthropic": {"base_url": "", "api_key": "", "model": "claude-sonnet-4-20250514"},
+    "ollama": {"base_url": "http://localhost:11434/v1", "api_key": "", "model": "qwen3:8b"},
+    "lm-studio": {"base_url": "http://localhost:1234/v1", "api_key": "", "model": ""},
+    "openai": {"base_url": "https://api.openai.com/v1", "api_key": "", "model": "gpt-5.2"},
+    "anthropic": {"base_url": "", "api_key": "", "model": "claude-sonnet-4-6"},
     "custom": {"base_url": "http://localhost:8080/v1", "api_key": "", "model": ""},
 }
+
+PROVIDER_MODELS: dict[str, list[str]] = {
+    "ollama": ["qwen3:8b", "llama3.3:70b", "deepseek-r1:8b", "gemma3:12b", "qwen3:32b", "phi4"],
+    "lm-studio": [],
+    "openai": ["gpt-5.2", "gpt-5.2-pro", "gpt-4.1", "gpt-4.1-mini", "o4-mini", "o3"],
+    "anthropic": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5", "claude-sonnet-4-5"],
+    "custom": [],
+}
+
+
+def fetch_model_list(base_url: str, api_key: str = "") -> list[str]:
+    """GET {base_url}/models and return sorted list of model IDs.
+
+    Returns an empty list on any error (connection refused, timeout, etc.).
+    """
+    url = f"{base_url.rstrip('/')}/models"
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        return sorted(item["id"] for item in body.get("data", []))
+    except Exception:
+        logger.debug("fetch_model_list failed for %s", url, exc_info=True)
+        return []
 
 
 def create_provider(
