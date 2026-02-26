@@ -715,6 +715,13 @@ class MainWindow(QMainWindow):
                 f = self._folder_repo.upsert(f)
             folders.append(f)
 
+        # Remove DB folders that no longer exist on the server
+        server_names = set(folder_names)
+        for db_folder in self._folder_repo.get_by_account(self._current_account.id):
+            if db_folder.name not in server_names:
+                logger.info("Pruning deleted folder: %s", db_folder.name)
+                self._folder_repo.delete(db_folder.id)
+
         self._refresh_folder_panel()
         self._start_scan(folders)
 
@@ -790,6 +797,13 @@ class MainWindow(QMainWindow):
                 f = Folder(account_id=self._current_account.id, name=name)
                 f = self._folder_repo.upsert(f)
             folders.append(f)
+
+        # Remove DB folders that no longer exist on the server
+        server_names = set(folder_names)
+        for db_folder in self._folder_repo.get_by_account(self._current_account.id):
+            if db_folder.name not in server_names:
+                logger.info("Pruning deleted folder: %s", db_folder.name)
+                self._folder_repo.delete(db_folder.id)
 
         self._refresh_folder_panel()
         self._start_scan(folders, force_full=True)

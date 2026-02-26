@@ -162,6 +162,11 @@ class FolderRepository:
                 return self._row_to_folder(row)
         return None
 
+    def delete(self, folder_id: int) -> None:
+        """Delete a folder and its messages (CASCADE handles messages)."""
+        with _safe_commit(self._conn):
+            self._conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+
     def _row_to_folder(self, row: sqlite3.Row) -> Folder:
         return Folder(
             id=row["id"],
