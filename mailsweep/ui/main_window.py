@@ -1628,7 +1628,7 @@ class MainWindow(QMainWindow):
     def _on_about(self) -> None:
         QMessageBox.about(
             self, "About MailSweep",
-            "MailSweep — IMAP Mailbox Analyzer & Cleaner\n\n"
+            f"MailSweep v{cfg.APP_VERSION} — IMAP Mailbox Analyzer & Cleaner\n\n"
             "Visualize where your email storage is going and\n"
             "surgically reclaim it with bulk operations.\n\n"
             "Author: Jit Ray Chowdhury\n"
