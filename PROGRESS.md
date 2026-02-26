@@ -1,7 +1,7 @@
 # MailSweep — Progress & Plan
 
 **Last updated:** 2026-02-25
-**Status:** All 7 phases implemented. App running. ~6,500 lines of Python. 85/85 tests passing. Published on GitHub. Version 0.4.1.
+**Status:** All 7 phases implemented. App running. ~6,500 lines of Python. 85/85 tests passing. Published on GitHub. Version 0.5.0.
 
 ---
 
@@ -114,7 +114,7 @@ Detach worker doesn't need this — it APPENDs a replacement message, so the old
 
 ### AI-Powered Analysis (Phase 7)
 LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
-- **Providers:** OpenAI-compatible (Ollama, OpenAI, Groq, Together) + Anthropic native API
+- **Providers:** OpenAI-compatible (Ollama, LM Studio, OpenAI, Groq, Together) + Anthropic native API
 - **Context builder:** Reads SQLite DB → markdown summary (folder tree with stats, top senders per folder,
   cross-folder sender overlap, dead folder detection). Capped at ~8K tokens.
 - **AI dock:** `QDockWidget` with chat history, provider/model selector, quick-action buttons
@@ -164,6 +164,8 @@ LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
 | Unlabelled stats stale after scan completes | Added `_refresh_folder_panel()` + `_refresh_size_label()` to `_on_scan_all_done()` |
 | Dots in folder names treated as hierarchy separators | Removed `.replace(".", "/")` in folder panel — only split on `/` (Gmail delimiter) |
 | AppImage `execv error: No such file or directory` | YAML heredoc indentation added leading whitespace to `.desktop` Exec= line; fixed with `sed` strip |
+| AI chat history grew on LLM errors (context exceeded model window) | Remove failed user message from `_history` on error; add Clear button to reset chat |
+| AI "Thinking…" removal fragile (only checked last block) | Use position-based removal: snapshot character count before adding, select-to-end on removal |
 
 ---
 
@@ -190,6 +192,10 @@ LLM integration via stdlib HTTP (`urllib.request`) — zero new dependencies.
 | **AI move suggestions** | LLM outputs `MOVE:` lines → user confirms → IMAP move worker executes |
 | **IMAP move worker** | RFC 6851 MOVE with copy+delete fallback, batched by source folder, DB cache update |
 | **AI settings** | Provider/URL/model in settings dialog + keyring for API key |
+| **Dynamic model dropdowns** | Editable QComboBox with per-provider model lists; Refresh button fetches models from local servers via `/v1/models` |
+| **LM Studio support** | Added as provider preset (localhost:1234); models discovered via Refresh |
+| **AI toolbar button** | Sparkle icon button in main toolbar to toggle AI Assistant dock |
+| **AI chat clear button** | Clear button resets chat history and display; errors no longer accumulate context |
 | **Move to… (manual)** | "Move to…" toolbar button + context menu action — folder picker dialog, reuses MoveWorker |
 | **Thread-aware unlabelled** | Three modes for unlabelled detection: message-id only, in-reply-to chain, Gmail thread ID |
 | **Find Detached Duplicates** | Detect Thunderbird-style detach leftovers (original + stripped copy in same folder) |
@@ -281,6 +287,14 @@ Outlook token refresh fix, README/LICENSE/.gitignore added, pyproject.toml metad
 ## Git Log
 
 ```
+5e7956c  fix: AI chat clear button, prevent history growth on errors
+8b76e90  feat: dynamic model dropdowns per provider, LM Studio support, AI toolbar button
+b04b2cc  fix: detach now trashes Gmail originals, detect cross-folder orphans
+6dd5f26  fix: prune deleted IMAP folders on scan, add version bump workflow
+eaab49b  fix: darken log dock background for readable text, bump to 0.4.2
+16a9073  chore: bump version to 0.4.1, sync uv.lock
+cbff525  fix: add missing AppRun script to AppImage build
+867d08c  chore: bump version to 0.4.0, update PROGRESS.md
 ad6d4f2  feat: label picker dialog for Remove Label action
 8321780  feat: add Remove Label action for duplicate labels cleanup
 8c674f2  chore: bump version to 0.3.2, update PROGRESS.md

@@ -41,7 +41,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Incremental scan** — rescan only fetches new/changed messages using UIDVALIDITY
 - **OAuth2 support** — Gmail (XOAUTH2) and Outlook (MSAL), plus password/app-password auth
 - **Filter bar** — filter by sender, subject, date range, size range, attachment presence
-- **AI assistant** — LLM-powered mailbox analysis (Ollama, OpenAI, Anthropic) — find misfilings, dead folders, sender overlap; apply AI-suggested IMAP moves with one click
+- **AI assistant** — LLM-powered mailbox analysis (Ollama, LM Studio, OpenAI, Anthropic) with dynamic model dropdowns and Refresh to discover local models; find misfilings, dead folders, sender overlap; apply AI-suggested IMAP moves with one click
 
 ## Installation
 
@@ -142,8 +142,10 @@ uv run mypy mailsweep/
   Linux, Keychain on macOS, Credential Manager on Windows). Never stored in files or logged.
 - **AI assistant** uses stdlib `urllib.request` to call LLM APIs (zero new dependencies). Builds a
   markdown context from the SQLite cache (folder tree, top senders, cross-folder overlap, dead folders)
-  and sends it as system prompt. Supports Ollama (local), OpenAI, and Anthropic. IMAP moves use
-  RFC 6851 `MOVE` with `COPY`+`DELETE`+`EXPUNGE` fallback.
+  and sends it as system prompt. Supports Ollama, LM Studio (local), OpenAI, and Anthropic.
+  Model dropdowns are pre-populated per provider; a Refresh button discovers models from local
+  servers via the `/v1/models` endpoint. IMAP moves use RFC 6851 `MOVE` with
+  `COPY`+`DELETE`+`EXPUNGE` fallback.
 
 ## Author
 
