@@ -72,14 +72,13 @@ jobs:
 
       - name: Create DMG
         run: |
-          # Create a zip of the .app bundle for distribution
-          cd dist
-          zip -r ../MailSweep-macos-arm64.zip MailSweep.app
+          hdiutil create -volname MailSweep -srcfolder dist/MailSweep.app \
+            -ov -format UDZO MailSweep-macos-arm64.dmg
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MailSweep-macos-arm64.zip
-          path: MailSweep-macos-arm64.zip
+          name: MailSweep-macos-arm64.dmg
+          path: MailSweep-macos-arm64.dmg
 
   appimage:
     runs-on: ubuntu-22.04
