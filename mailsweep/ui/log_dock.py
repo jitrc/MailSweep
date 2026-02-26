@@ -15,8 +15,8 @@ from PyQt6.QtWidgets import (
 
 
 _LEVEL_COLORS = {
-    logging.DEBUG: QColor(150, 150, 150),
-    logging.INFO: QColor(220, 220, 220),
+    logging.DEBUG: QColor(140, 140, 140),
+    logging.INFO: QColor(212, 212, 212),
     logging.WARNING: QColor(255, 200, 50),
     logging.ERROR: QColor(255, 80, 80),
     logging.CRITICAL: QColor(255, 0, 0),
@@ -70,6 +70,9 @@ class LogDockWidget(QDockWidget):
         self._text = QPlainTextEdit()
         self._text.setReadOnly(True)
         self._text.setMaximumBlockCount(5000)
+        self._text.setStyleSheet(
+            "QPlainTextEdit { background-color: #1e1e1e; }"
+        )
         font = self._text.font()
         font.setFamily("monospace")
         font.setPointSize(9)
