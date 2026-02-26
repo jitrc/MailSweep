@@ -136,6 +136,11 @@ class AiDockWidget(QDockWidget):
         self._send_btn = QPushButton("Send")
         self._send_btn.clicked.connect(self._on_send)
         input_row.addWidget(self._send_btn)
+
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setToolTip("Clear chat history")
+        self._clear_btn.clicked.connect(self._on_clear)
+        input_row.addWidget(self._clear_btn)
         layout.addLayout(input_row)
 
         self.setWidget(container)
@@ -289,6 +294,8 @@ class AiDockWidget(QDockWidget):
         cfg.save_settings()
 
     def _on_thinking(self) -> None:
+        # Save cursor position so we can reliably remove "Thinking…" later
+        self._thinking_cursor_pos = self._chat_browser.document().characterCount()
         self._append_chat("system", "Thinking…")
 
     def _on_response(self, text: str) -> None:
@@ -303,12 +310,22 @@ class AiDockWidget(QDockWidget):
 
     def _on_error(self, msg: str) -> None:
         self._remove_last_system()
+        # Remove the failed user message from history so context doesn't grow
+        if self._history and self._history[-1]["role"] == "user":
+            self._history.pop()
         self._append_chat("system", f"Error: {msg}")
 
     def _on_thread_done(self) -> None:
         self._ai_thread = None
         self._ai_worker = None
         self._send_btn.setEnabled(True)
+
+    def _on_clear(self) -> None:
+        """Reset chat history and display."""
+        self._history.clear()
+        self._last_response = ""
+        self._chat_browser.clear()
+        self._apply_btn.setEnabled(False)
 
     def _on_apply(self) -> None:
         moves = _MOVE_RE.findall(self._last_response)
@@ -329,16 +346,16 @@ class AiDockWidget(QDockWidget):
         self._chat_browser.append(html)
 
     def _remove_last_system(self) -> None:
-        """Remove the last 'Thinking…' system message from the display."""
+        """Remove the 'Thinking…' message added by _on_thinking()."""
+        pos = getattr(self, "_thinking_cursor_pos", None)
+        if pos is None:
+            return
         cursor = self._chat_browser.textCursor()
-        doc = self._chat_browser.document()
-        # Find and remove the last block if it was our thinking message
-        block = doc.lastBlock()
-        if block.isValid() and "Thinking" in block.text():
-            cursor.movePosition(cursor.MoveOperation.End)
-            cursor.movePosition(cursor.MoveOperation.StartOfBlock, cursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
-            cursor.deletePreviousChar()  # remove trailing newline
+        # Select from saved position to end and remove
+        cursor.setPosition(max(pos - 1, 0))
+        cursor.movePosition(cursor.MoveOperation.End, cursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        self._thinking_cursor_pos = None
 
 
 def _escape(text: str) -> str:
