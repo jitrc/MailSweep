@@ -709,12 +709,13 @@ class MessageRepository:
     def find_detached_originals(self, account_id: int) -> tuple[list[Message], int, int]:
         """Find original messages that have a smaller detached copy.
 
-        Thunderbird's "Detach Attachment" leaves the original (with attachment)
-        on the server alongside the stripped copy.  This finds pairs sharing
-        (from_addr, subject, date) where one is >1.5x larger.
-
-        Returns both the originals (tagged "Original") and copies (tagged
-        "Detached Copy") grouped by pair, so the user can verify before deleting.
+        Two detection strategies (results are merged):
+        1. Thunderbird-style: same (from, subject, date) in non-Gmail folders,
+           one copy >1.5× larger.
+        2. Message-ID-based: same message_id across ANY folders (incl. Gmail),
+           one copy >1.5× larger.  Catches MailSweep detach orphans where the
+           original stays in [Gmail]/All Mail after the label-folder copy is
+           replaced with a stripped version.
 
         Returns (messages, original_count, original_total_bytes).
         """
@@ -725,7 +726,8 @@ class MessageRepository:
                 WHERE f.account_id = ?
                   AND f.name NOT LIKE '[Gmail]/%%'
             ),
-            pairs AS (
+            -- Thunderbird: same identity tuple, non-Gmail folders only
+            identity_pairs AS (
                 SELECT a.id AS copy_id, b.id AS orig_id
                 FROM non_gmail a
                 JOIN non_gmail b
@@ -734,6 +736,27 @@ class MessageRepository:
                  AND a.subject = b.subject
                  AND a.size_bytes < b.size_bytes
                  AND b.size_bytes > a.size_bytes * 1.5
+            ),
+            -- MailSweep detach: same message_id, all folders
+            acct_folder_ids AS (
+                SELECT id FROM folders WHERE account_id = ?
+            ),
+            msgid_pairs AS (
+                SELECT a.id AS copy_id, b.id AS orig_id
+                FROM messages a
+                JOIN messages b
+                  ON a.message_id = b.message_id
+                 AND a.message_id != ''
+                 AND a.id != b.id
+                 AND a.size_bytes < b.size_bytes
+                 AND b.size_bytes > a.size_bytes * 1.5
+                WHERE a.folder_id IN (SELECT id FROM acct_folder_ids)
+                  AND b.folder_id IN (SELECT id FROM acct_folder_ids)
+            ),
+            pairs AS (
+                SELECT copy_id, orig_id FROM identity_pairs
+                UNION
+                SELECT copy_id, orig_id FROM msgid_pairs
             )
             SELECT DISTINCT m.*, f.name AS folder_name,
                    CASE WHEN m.id IN (SELECT orig_id FROM pairs)
@@ -749,7 +772,7 @@ class MessageRepository:
             JOIN folders f ON f.id = m.folder_id
             ORDER BY m.from_addr, m.subject, m.date, m.size_bytes DESC
         """
-        rows = self._conn.execute(sql, (account_id,)).fetchall()
+        rows = self._conn.execute(sql, (account_id, account_id)).fetchall()
         messages = []
         for r in rows:
             row_dict = dict(r)

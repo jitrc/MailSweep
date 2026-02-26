@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from mailsweep.imap.connection import connect
+from mailsweep.imap.connection import connect, find_trash_folder
 from mailsweep.models.account import Account
 from mailsweep.models.message import Message
 from mailsweep.utils.mime_utils import strip_attachments
@@ -58,6 +58,11 @@ class DetachWorker(QObject):
             return
 
         total = len(self._messages)
+
+        # On Gmail, EXPUNGE from a label folder only removes the label —
+        # the original stays in All Mail.  COPY to Trash first so the
+        # original is actually deleted.
+        trash_folder = find_trash_folder(self._folder_id_to_name)
 
         # Group messages by folder to avoid constant folder switching
         from collections import defaultdict
@@ -118,6 +123,11 @@ class DetachWorker(QObject):
                                 folder_name, cleaned_bytes, append_flags, orig_date,
                             )
                             logger.info("APPEND result: %s", append_result)
+                            # On Gmail, move original to Trash so it's
+                            # actually deleted (not just unlabelled).
+                            if trash_folder and folder_name != trash_folder:
+                                client.copy([msg.uid], trash_folder)
+                                logger.info("Copied UID %d to %s", msg.uid, trash_folder)
                             client.set_flags([msg.uid], [b"\\Deleted"])
                             logger.info("Marked UID %d as \\Deleted", msg.uid)
                             try:
