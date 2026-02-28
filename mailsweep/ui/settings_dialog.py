@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -27,7 +28,8 @@ class SettingsDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(620)
+        self.setMinimumHeight(560)
         self._build_ui()
         self._populate()
 
@@ -61,6 +63,18 @@ class SettingsDialog(QDialog):
         self._unlabelled_mode.addItem("In-Reply-To chain", "in_reply_to")
         self._unlabelled_mode.addItem("Gmail Thread ID", "gmail_thread")
         form.addRow("Unlabelled detection:", self._unlabelled_mode)
+
+        self._skip_all_mail = QCheckBox("Disable All Mail folder (no sync, no counts, no filters, no viz)")
+        form.addRow("", self._skip_all_mail)
+
+        self._skip_all_mail_note = QLabel(
+            "<i>Note: when disabled, Unlabelled email detection and\n"
+            "Find Detached Duplicates will not work.</i>"
+        )
+        self._skip_all_mail_note.setWordWrap(True)
+        self._skip_all_mail_note.setVisible(False)
+        self._skip_all_mail.toggled.connect(self._skip_all_mail_note.setVisible)
+        form.addRow("", self._skip_all_mail_note)
 
         general_group.setLayout(form)
         layout.addWidget(general_group)
@@ -114,6 +128,8 @@ class SettingsDialog(QDialog):
         mode_idx = self._unlabelled_mode.findData(cfg.UNLABELLED_MODE)
         if mode_idx >= 0:
             self._unlabelled_mode.setCurrentIndex(mode_idx)
+        self._skip_all_mail.setChecked(cfg.SKIP_ALL_MAIL)
+        self._skip_all_mail_note.setVisible(cfg.SKIP_ALL_MAIL)
 
         idx = self._ai_provider.findText(cfg.AI_PROVIDER)
         if idx >= 0:
@@ -201,6 +217,7 @@ class SettingsDialog(QDialog):
         cfg.DEFAULT_SAVE_DIR = save_path
 
         cfg.UNLABELLED_MODE = self._unlabelled_mode.currentData()
+        cfg.SKIP_ALL_MAIL = self._skip_all_mail.isChecked()
 
         cfg.AI_PROVIDER = self._ai_provider.currentText()
         cfg.AI_BASE_URL = self._ai_base_url.text().strip()

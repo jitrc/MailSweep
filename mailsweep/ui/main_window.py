@@ -224,7 +224,6 @@ class MainWindow(QMainWindow):
         file_menu.addAction("E&xit", self.close)
 
         view_menu = menubar.addMenu("&View")
-        view_menu.addAction("Reload from Cache", self._on_reload_cache)
         view_menu.addAction("Settings…", self._on_settings)
         view_menu.addSeparator()
         view_menu.addAction("Show Log", self._show_log_dock)
@@ -326,23 +325,46 @@ class MainWindow(QMainWindow):
 
     # ── Folder panel ──────────────────────────────────────────────────────────
 
+    def _find_all_mail_id(self) -> int | None:
+        """Return the All Mail folder ID for the current account, or None."""
+        if not self._current_account or not self._current_account.id:
+            return None
+        f = self._folder_repo.find_all_mail_folder(self._current_account.id)
+        return f.id if f and f.id is not None else None
+
+    def _filter_folders(self, folders: list[Folder]) -> list[Folder]:
+        """Remove All Mail from the list when SKIP_ALL_MAIL is enabled."""
+        if not cfg.SKIP_ALL_MAIL:
+            return folders
+        am_id = self._find_all_mail_id()
+        return [f for f in folders if f.id != am_id] if am_id is not None else folders
+
+    def _filter_folder_ids(self, folder_ids: list[int]) -> list[int]:
+        """Remove All Mail folder ID from the list when SKIP_ALL_MAIL is enabled."""
+        if not cfg.SKIP_ALL_MAIL:
+            return folder_ids
+        am_id = self._find_all_mail_id()
+        return [fid for fid in folder_ids if fid != am_id] if am_id is not None else folder_ids
+
     def _refresh_folder_panel(self) -> None:
         if not self._current_account:
             return
         assert self._current_account.id is not None
         folders = self._folder_repo.get_by_account(self._current_account.id)
-        folder_ids = [f.id for f in folders if f.id is not None]
+        display_folders = self._filter_folders(folders)
+        folder_ids = [f.id for f in display_folders if f.id is not None]
         dedup_size, dedup_count = self._msg_repo.get_dedup_total_size(folder_ids) if folder_ids else (0, 0)
 
-        # Compute unlabelled stats for Gmail accounts
+        # Compute unlabelled stats for Gmail accounts (only when All Mail is enabled)
         unlabelled_stats: tuple[int, int] | None = None
-        all_mail = self._folder_repo.find_all_mail_folder(self._current_account.id)
-        if all_mail and all_mail.id is not None:
-            other_ids = [fid for fid in folder_ids if fid != all_mail.id]
-            count, size = self._msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode=cfg.UNLABELLED_MODE)
-            unlabelled_stats = (count, size)
+        if not cfg.SKIP_ALL_MAIL:
+            all_mail = self._folder_repo.find_all_mail_folder(self._current_account.id)
+            if all_mail and all_mail.id is not None:
+                other_ids = [fid for fid in folder_ids if fid != all_mail.id]
+                count, size = self._msg_repo.get_unlabelled_stats(all_mail.id, other_ids, mode=cfg.UNLABELLED_MODE)
+                unlabelled_stats = (count, size)
 
-        self._folder_panel.populate(folders, dedup_total=dedup_size, unlabelled_stats=unlabelled_stats)
+        self._folder_panel.populate(display_folders, dedup_total=dedup_size, unlabelled_stats=unlabelled_stats)
 
     def _on_folder_selected(self, folder_ids: list[int]) -> None:
         self._current_folder_ids = folder_ids
@@ -406,7 +428,7 @@ class MainWindow(QMainWindow):
         else:
             # All folders for this account
             folders = self._folder_repo.get_by_account(self._current_account.id)
-            folder_ids = [f.id for f in folders if f.id is not None]
+            folder_ids = self._filter_folder_ids([f.id for f in folders if f.id is not None])
 
         filter_kwargs = self._filter_bar.get_filter_kwargs()
         messages = self._msg_repo.query_messages(folder_ids=folder_ids, **filter_kwargs)
@@ -414,9 +436,6 @@ class MainWindow(QMainWindow):
         self._update_status(f"{len(messages)} messages")
 
     def _on_filter_changed(self, kwargs: dict) -> None:
-        self._reload_messages()
-
-    def _on_reload_cache(self) -> None:
         self._reload_messages()
 
     def _query_unlabelled(self, **filter_kwargs) -> list[Message]:
@@ -441,7 +460,7 @@ class MainWindow(QMainWindow):
         if not self._current_account or not self._current_account.id:
             return []
         folders = self._folder_repo.get_by_account(self._current_account.id)
-        return [f.id for f in folders if f.id is not None]
+        return self._filter_folder_ids([f.id for f in folders if f.id is not None])
 
     def _refresh_treemap(self) -> None:
         if not self._current_account:
@@ -559,7 +578,7 @@ class MainWindow(QMainWindow):
         - Leaf folder selected → show top messages by size
         """
         assert self._current_account and self._current_account.id
-        all_folders = self._folder_repo.get_by_account(self._current_account.id)
+        all_folders = self._filter_folders(self._folder_repo.get_by_account(self._current_account.id))
 
         if not self._current_folder_ids:
             # Show top-level: group by first path component
@@ -732,7 +751,7 @@ class MainWindow(QMainWindow):
                 self._folder_repo.delete(db_folder.id)
 
         self._refresh_folder_panel()
-        self._start_scan(folders)
+        self._start_scan(self._filter_folders(folders))
 
     def _on_scan_selected(self) -> None:
         """Scan only the folder(s) currently selected in the folder panel."""
@@ -815,7 +834,7 @@ class MainWindow(QMainWindow):
                 self._folder_repo.delete(db_folder.id)
 
         self._refresh_folder_panel()
-        self._start_scan(folders, force_full=True)
+        self._start_scan(self._filter_folders(folders), force_full=True)
 
     def _start_scan(self, folders: list[Folder], force_full: bool = False) -> None:
         """Common scan launcher used by both Scan All and Scan Selected."""
@@ -1233,10 +1252,11 @@ class MainWindow(QMainWindow):
             return
 
         account_id = self._current_account.id
+        am_id = self._find_all_mail_id() if cfg.SKIP_ALL_MAIL else None
 
         def _show() -> None:
             messages, orig_count, total_bytes = self._msg_repo.find_detached_originals(
-                account_id,
+                account_id, skip_folder_ids=[am_id] if am_id is not None else None,
             )
             self._msg_table.set_messages(messages)
             self._msg_table.set_show_role(True)
@@ -1272,16 +1292,19 @@ class MainWindow(QMainWindow):
 
         all_mail = self._folder_repo.find_all_mail_folder(account_id)
         if all_mail and all_mail.id is not None:
-            answer = QMessageBox.question(
-                self, "Skip All Mail?",
-                f"Skip \"{all_mail.name}\"?\n\n"
-                "It contains copies of all messages and would cause "
-                "every labelled message to appear as a duplicate.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if answer == QMessageBox.StandardButton.Yes:
+            if cfg.SKIP_ALL_MAIL:
                 skip_ids.append(all_mail.id)
+            else:
+                answer = QMessageBox.question(
+                    self, "Skip All Mail?",
+                    f"Skip \"{all_mail.name}\"?\n\n"
+                    "It contains copies of all messages and would cause "
+                    "every labelled message to appear as a duplicate.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if answer == QMessageBox.StandardButton.Yes:
+                    skip_ids.append(all_mail.id)
 
         skip_arg = skip_ids or None
 
@@ -1587,7 +1610,7 @@ class MainWindow(QMainWindow):
 
         # Deduplicated mailbox size (avoids Gmail label double-counting)
         folders = self._folder_repo.get_by_account(self._current_account.id)
-        folder_ids = [f.id for f in folders if f.id is not None]
+        folder_ids = self._filter_folder_ids([f.id for f in folders if f.id is not None])
         if folder_ids:
             dedup_size, dedup_count = self._msg_repo.get_dedup_total_size(folder_ids)
             if dedup_size > 0:

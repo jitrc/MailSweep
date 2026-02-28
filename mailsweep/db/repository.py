@@ -706,7 +706,11 @@ class MessageRepository:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def find_detached_originals(self, account_id: int) -> tuple[list[Message], int, int]:
+    def find_detached_originals(
+        self,
+        account_id: int,
+        skip_folder_ids: list[int] | None = None,
+    ) -> tuple[list[Message], int, int]:
         """Find original messages that have a smaller detached copy.
 
         Two detection strategies (results are merged):
@@ -719,12 +723,25 @@ class MessageRepository:
 
         Returns (messages, original_count, original_total_bytes).
         """
-        sql = """
+        skip_clause = ""
+        skip_params: list[int] = []
+        if skip_folder_ids:
+            placeholders = ",".join("?" * len(skip_folder_ids))
+            skip_clause = f"AND f.id NOT IN ({placeholders})"
+            skip_params = list(skip_folder_ids)
+
+        acct_skip_clause = ""
+        if skip_folder_ids:
+            placeholders = ",".join("?" * len(skip_folder_ids))
+            acct_skip_clause = f"AND id NOT IN ({placeholders})"
+
+        sql = f"""
             WITH non_gmail AS (
                 SELECT m.* FROM messages m
                 JOIN folders f ON m.folder_id = f.id
                 WHERE f.account_id = ?
                   AND f.name NOT LIKE '[Gmail]/%%'
+                  {skip_clause}
             ),
             -- Thunderbird: same identity tuple, non-Gmail folders only
             identity_pairs AS (
@@ -739,7 +756,7 @@ class MessageRepository:
             ),
             -- MailSweep detach: same message_id, all folders
             acct_folder_ids AS (
-                SELECT id FROM folders WHERE account_id = ?
+                SELECT id FROM folders WHERE account_id = ? {acct_skip_clause}
             ),
             msgid_pairs AS (
                 SELECT a.id AS copy_id, b.id AS orig_id
@@ -772,7 +789,8 @@ class MessageRepository:
             JOIN folders f ON f.id = m.folder_id
             ORDER BY m.from_addr, m.subject, m.date, m.size_bytes DESC
         """
-        rows = self._conn.execute(sql, (account_id, account_id)).fetchall()
+        params: list[Any] = [account_id] + skip_params + [account_id] + skip_params
+        rows = self._conn.execute(sql, params).fetchall()
         messages = []
         for r in rows:
             row_dict = dict(r)
