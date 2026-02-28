@@ -1649,14 +1649,41 @@ class MainWindow(QMainWindow):
             self._quota_bytes = None
 
     def _on_about(self) -> None:
-        QMessageBox.about(
-            self, "About MailSweep",
-            f"MailSweep v{cfg.APP_VERSION} — IMAP Mailbox Analyzer & Cleaner\n\n"
-            "Visualize where your email storage is going and\n"
-            "surgically reclaim it with bulk operations.\n\n"
-            "Author: Jit Ray Chowdhury\n"
-            "Built with Python, PyQt6, and imapclient.",
+        from PyQt6.QtWidgets import QApplication, QDialogButtonBox
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About MailSweep")
+        dlg.setMinimumWidth(340)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+
+        # Logo
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        app_icon = QApplication.instance().windowIcon()  # type: ignore[union-attr]
+        if not app_icon.isNull():
+            logo_label.setPixmap(app_icon.pixmap(96, 96))
+            layout.addWidget(logo_label)
+
+        # Text
+        text = QLabel(
+            f"<b>MailSweep v{cfg.APP_VERSION}</b><br>"
+            "IMAP Mailbox Analyzer &amp; Cleaner<br><br>"
+            "Visualize where your email storage is going and<br>"
+            "surgically reclaim it with bulk operations.<br><br>"
+            "Author: Jit Ray Chowdhury<br>"
+            "Built with Python, PyQt6, and imapclient."
         )
+        text.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        text.setWordWrap(True)
+        layout.addWidget(text)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+
+        dlg.exec()
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 

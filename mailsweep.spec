@@ -11,6 +11,7 @@ a = Analysis(
     datas=[
         (certifi.where(), 'certifi'),
         ('mailsweep/resources/icon.svg', 'mailsweep/resources'),
+        ('mailsweep/resources/icon.png', 'mailsweep/resources'),
     ],
     hiddenimports=[
         'imapclient',
@@ -38,6 +39,11 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data)
 
+_icon_exe = (
+    'mailsweep/resources/icon.ico' if sys.platform == 'win32'
+    else 'mailsweep/resources/icon.png'
+)
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -54,6 +60,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=_icon_exe,
 )
 
 if sys.platform == 'darwin':
@@ -61,6 +68,7 @@ if sys.platform == 'darwin':
         exe,
         name='MailSweep.app',
         bundle_identifier='com.jitrc.mailsweep',
+        icon='mailsweep/resources/icon.icns',
         info_plist={
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,

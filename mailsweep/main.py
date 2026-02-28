@@ -32,9 +32,17 @@ def main() -> None:
         app.setApplicationName("MailSweep")
         app.setOrganizationName("MailSweep")
 
-        icon_path = Path(__file__).resolve().parent / "resources" / "icon.svg"
-        if icon_path.exists():
-            app.setWindowIcon(QIcon(str(icon_path)))
+        # Resolve resource dir: sys._MEIPASS when frozen by PyInstaller,
+        # otherwise the package directory alongside this file.
+        if getattr(sys, "frozen", False):
+            _res = Path(sys._MEIPASS) / "mailsweep" / "resources"  # type: ignore[attr-defined]
+        else:
+            _res = Path(__file__).resolve().parent / "resources"
+        for _icon_name in ("icon.png", "icon.svg"):
+            icon_path = _res / _icon_name
+            if icon_path.exists():
+                app.setWindowIcon(QIcon(str(icon_path)))
+                break
 
         window = MainWindow()
         window.show()
