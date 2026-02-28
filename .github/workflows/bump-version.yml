@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   bump:
@@ -69,3 +70,8 @@ jobs:
         run: |
           git push origin HEAD
           git push origin "v${{ steps.next.outputs.version }}"
+
+      - name: Trigger release workflow
+        run: gh workflow run release.yml --ref "v${{ steps.next.outputs.version }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
