@@ -41,14 +41,27 @@ jobs:
       - name: Build executable
         run: uv run pyinstaller mailsweep.spec
 
-      - name: Rename artifact
+      - name: Get version
+        id: version
         shell: bash
-        run: mv "dist/${{ matrix.artifact_name }}" "dist/${{ matrix.asset_name }}"
+        run: |
+          version=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Rename artifact
+        id: rename
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BASE="${{ matrix.asset_name }}"
+          VERSIONED="${BASE/MailSweep/MailSweep-v${VERSION}}"
+          mv "dist/${{ matrix.artifact_name }}" "dist/${VERSIONED}"
+          echo "versioned=${VERSIONED}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: dist/${{ matrix.asset_name }}
+          name: ${{ steps.rename.outputs.versioned }}
+          path: dist/${{ steps.rename.outputs.versioned }}
 
   macos:
     runs-on: macos-latest
@@ -72,14 +85,18 @@ jobs:
         run: uv run pyinstaller mailsweep.spec
 
       - name: Create DMG
+        id: dmg
         run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          DMG="MailSweep-v${VERSION}-macos-arm64.dmg"
           hdiutil create -volname MailSweep -srcfolder dist/MailSweep.app \
-            -ov -format UDZO MailSweep-macos-arm64.dmg
+            -ov -format UDZO "${DMG}"
+          echo "dmg=${DMG}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MailSweep-macos-arm64.dmg
-          path: MailSweep-macos-arm64.dmg
+          name: ${{ steps.dmg.outputs.dmg }}
+          path: ${{ steps.dmg.outputs.dmg }}
 
   appimage:
     runs-on: ubuntu-22.04
@@ -166,13 +183,17 @@ jobs:
           " 2>/dev/null || convert -size 256x256 xc:'#3478F6' -fill white -font Helvetica-Bold -pointsize 180 -gravity center -annotate 0 'M' AppDir/mailsweep.png 2>/dev/null || touch AppDir/mailsweep.png
 
       - name: Build AppImage
+        id: appimage
         run: |
-          ARCH=x86_64 ./appimagetool AppDir MailSweep-x86_64.AppImage
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          APPIMAGE="MailSweep-v${VERSION}-x86_64.AppImage"
+          ARCH=x86_64 ./appimagetool AppDir "${APPIMAGE}"
+          echo "appimage=${APPIMAGE}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MailSweep-x86_64.AppImage
-          path: MailSweep-x86_64.AppImage
+          name: ${{ steps.appimage.outputs.appimage }}
+          path: ${{ steps.appimage.outputs.appimage }}
 
   release:
     needs: [build, macos, appimage]
