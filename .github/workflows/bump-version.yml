@@ -11,6 +11,10 @@ on:
           - patch
           - minor
           - major
+      message:
+        description: 'Optional release notes (appended after version, e.g. "fix macOS build")'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -63,7 +67,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml mailsweep/config.py mailsweep.spec uv.lock
-          git commit -m "chore: bump version to ${{ steps.next.outputs.version }}"
+          MSG="release: v${{ steps.next.outputs.version }}"
+          if [ -n "${{ inputs.message }}" ]; then
+            MSG="${MSG} — ${{ inputs.message }}"
+          fi
+          git commit -m "${MSG}"
           git tag "v${{ steps.next.outputs.version }}"
 
       - name: Push
