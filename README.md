@@ -278,6 +278,22 @@ treemaps, and duplicate searches since every message appears at least twice.
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
 | **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
+### Extract vs Detach
+
+Both operations save attachments to your local disk, but they differ in what happens to the server message:
+
+**Extract Attachments** — read-only. The attachment is copied to disk and the original message on the server is left completely untouched. Use this when you want a local copy of a file but still want the full message to remain in your mailbox (e.g. contracts, receipts you may need to forward).
+
+**Detach Attachments** — modifies the server. The attachment is saved locally, then the message on the server is rewritten: the attachment part is replaced with a small text/plain placeholder that records the local file path. The message subject, body text, and metadata are preserved. Use this to permanently reclaim storage — a 10 MB PDF attachment becomes a few hundred bytes on the server while the file lives on your disk.
+
+> After detaching, run **Actions → Find Detached Duplicates** to catch any orphaned originals that survived in other folders (common on Gmail's All Mail).
+
+### Backup vs Backup & Delete
+
+**Backup** — downloads the complete message as a standard `.eml` file (RFC 822 format, openable in any email client) and leaves the server message intact. Use this to archive important messages locally before cleaning up, or to migrate mail between providers.
+
+**Backup & Delete** — same download, then immediately moves the message to Trash. This is the safe way to remove messages you want to keep a local copy of. On Gmail, the move goes to `[Gmail]/Trash` rather than expunging directly, so there is a recovery window before Gmail permanently deletes it.
+
 ## Data Locations
 
 | Item | Path |
