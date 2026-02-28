@@ -166,6 +166,8 @@ jobs:
           # icon.png is committed to the repo — copy directly
           cp mailsweep/resources/icon.png AppDir/mailsweep.png
           cp mailsweep/resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/mailsweep.png
+          # .DirIcon is what file managers (via appimage-thumbnailer) use to show the icon
+          cp mailsweep/resources/icon.png AppDir/.DirIcon
 
       - name: Build AppImage
         id: appimage
