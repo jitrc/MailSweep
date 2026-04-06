@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QTimer, QUrl
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
@@ -71,13 +71,27 @@ class UnsubscribeDialog(QDialog):
         s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, False)
 
         allowed_host = urlparse(url).netloc
-        page = _SandboxedPage(allowed_host, profile, self)
+        self._page = _SandboxedPage(allowed_host, profile, self)
 
-        view = QWebEngineView(self)
-        view.setPage(page)
-        view.load(QUrl(url))
-        layout.addWidget(view, stretch=1)
+        self._view = QWebEngineView(self)
+        self._view.setPage(self._page)
+        self._view.load(QUrl(url))
+        layout.addWidget(self._view, stretch=1)
 
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        btn_box.rejected.connect(self.reject)
+        btn_box.rejected.connect(self._safe_close)
         layout.addWidget(btn_box)
+
+    def closeEvent(self, event) -> None:
+        """Intercept window-X close to go through safe shutdown."""
+        event.ignore()
+        self._safe_close()
+
+    def _safe_close(self) -> None:
+        """Navigate to blank before closing to stop WebEngine background activity."""
+        # Disconnect closeEvent guard so the deferred reject() can actually close
+        self.closeEvent = lambda e: e.accept()  # type: ignore[method-assign]
+        self._view.stop()
+        self._page.setUrl(QUrl("about:blank"))
+        # Give QtWebEngineCore a tick to wind down before the destructor runs
+        QTimer.singleShot(200, self.reject)

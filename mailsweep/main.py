@@ -25,6 +25,7 @@ def main() -> None:
         from pathlib import Path
 
         from PyQt6.QtGui import QIcon
+        from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401 — must import before QApplication
         from PyQt6.QtWidgets import QApplication
         from mailsweep.ui.main_window import MainWindow
 
