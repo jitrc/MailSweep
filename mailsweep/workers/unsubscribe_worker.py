@@ -77,9 +77,11 @@ class UnsubscribeWorker(QObject):
                 try:
                     client.select_folder(folder_name, readonly=True)
                 except Exception as exc:
+                    err_lower = str(exc).lower()
+                    status = "no_header" if ("does not exist" in err_lower or "trycreate" in err_lower) else "error"
                     logger.warning("Cannot select %s: %s", folder_name, exc)
                     for msg in folder_msgs:
-                        self.message_done.emit(msg, "error")
+                        self.message_done.emit(msg, status)
                         done += 1
                     continue
 

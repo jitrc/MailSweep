@@ -76,7 +76,16 @@ class DeleteWorker(QObject):
                 try:
                     client.select_folder(folder_name, readonly=False)
                 except Exception as exc:
-                    self.error.emit(f"Cannot select {folder_name}: {exc}")
+                    err_lower = str(exc).lower()
+                    if "does not exist" in err_lower or "trycreate" in err_lower:
+                        # Folder is gone from server — prune from local cache
+                        logger.warning("Folder %s no longer exists, pruning %d messages", folder_name, len(folder_msgs))
+                        for msg in folder_msgs:
+                            self.message_done.emit(msg, "deleted")
+                    else:
+                        self.error.emit(f"Cannot select {folder_name}: {exc}")
+                        for msg in folder_msgs:
+                            self.message_done.emit(msg, "error")
                     done += len(folder_msgs)
                     continue
 
@@ -103,7 +112,8 @@ class DeleteWorker(QObject):
                                     else:
                                         raise
                             copied = min(i + _COPY_BATCH_SIZE, n)
-                            self.progress.emit(done, total, f"{copied}/{n} to Trash…")
+                            sender = folder_msgs[i].from_addr[:50]
+                            self.progress.emit(done, total, f"{copied}/{n} to Trash — {sender}…")
                             logger.info("Copied UIDs %d-%d from %s to %s", i, copied, folder_name, trash_folder)
                             if i + _COPY_BATCH_SIZE < n:
                                 time.sleep(_COPY_BATCH_DELAY)
