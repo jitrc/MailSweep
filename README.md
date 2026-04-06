@@ -47,6 +47,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Select-all checkbox** — checkbox in the message table header selects or deselects all visible messages; shows tri-state (partial) indicator when only some rows are checked
 - **Fast batch delete** — bulk delete sends messages to Trash in optimised batches with automatic rate-limit retry; significantly faster than deleting one message at a time
 - **Provider profiles** — Add Account dialog includes preset profiles for Gmail, Outlook, Yahoo, ProtonMail, and Fastmail that auto-fill host, port, SSL, and auth type
+- **Count view** — treemap view that sizes tiles by number of emails per sender rather than storage size; makes it easy to spot and bulk-delete spam where a single address has sent 50+ messages
 
 ## Installation
 
@@ -112,6 +113,7 @@ change the view mode.
 | **Senders** | One tile per unique sender email, sized by total bytes from that sender | Identifying who is flooding your inbox with large mail |
 | **Receivers** | One tile per recipient address, sized by total bytes to that address | Useful in Sent folders to see who you send large mail to |
 | **Messages** | One tile per individual message, sized by message size | Finding the single largest messages to delete |
+| **Count** | One tile per sender, sized by number of emails received from that sender | Spotting spammers — a single address sending 50+ emails shows up as a large tile even if the individual messages are small |
 
 **Drill-down (Folders mode):** Click any folder tile to zoom into its sub-labels. Click a
 leaf folder to see its top individual messages. Click **All Folders** in the left tree to

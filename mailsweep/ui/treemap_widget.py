@@ -43,12 +43,14 @@ class TreemapItem(NamedTuple):
     label: str        # display name
     sublabel: str     # second line (e.g. "42 msgs" or folder name)
     size_bytes: int
+    display_str: str = ""  # override for tile value label (e.g. "42 msgs"); defaults to human_size
 
 
 VIEW_FOLDERS = 0
 VIEW_SENDERS = 1
 VIEW_MESSAGES = 2
 VIEW_RECEIVERS = 3
+VIEW_COUNT = 4
 
 
 class _TreemapCanvas(QWidget):
@@ -124,7 +126,7 @@ class _TreemapCanvas(QWidget):
             iw, ih = int(rect.width()), int(rect.height())
             if iw > 40 and ih > 20:
                 text_rect = rect.adjusted(4, 4, -4, -4)
-                size_str = human_size(item.size_bytes)
+                size_str = item.display_str if item.display_str else human_size(item.size_bytes)
 
                 lh = fm.height() + 2  # line height: font height + 2px spacing
                 tx = text_rect.x()
@@ -179,7 +181,8 @@ class _TreemapCanvas(QWidget):
             if hovered is not None:
                 found = next((it for _, it in self._rects if it.key == hovered), None)
                 if found:
-                    tip = f"{found.label}\n{found.sublabel}\n{human_size(found.size_bytes)}" if found.sublabel else f"{found.label}\n{human_size(found.size_bytes)}"
+                    val_str = found.display_str if found.display_str else human_size(found.size_bytes)
+                    tip = f"{found.label}\n{found.sublabel}\n{val_str}" if found.sublabel else f"{found.label}\n{val_str}"
                     self.setToolTip(tip)
         super().mouseMoveEvent(event)
 
@@ -210,7 +213,7 @@ class TreemapWidget(QWidget):
     sender_clicked = pyqtSignal(str)     # from_addr
     receiver_clicked = pyqtSignal(str)   # to_addr
     message_clicked = pyqtSignal(int)    # message uid
-    view_mode_changed = pyqtSignal(int)  # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES / VIEW_RECEIVERS
+    view_mode_changed = pyqtSignal(int)  # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES / VIEW_RECEIVERS / VIEW_COUNT
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -229,6 +232,7 @@ class TreemapWidget(QWidget):
         self._mode_combo.addItem("Senders", VIEW_SENDERS)
         self._mode_combo.addItem("Receivers", VIEW_RECEIVERS)
         self._mode_combo.addItem("Messages", VIEW_MESSAGES)
+        self._mode_combo.addItem("Count", VIEW_COUNT)
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self._mode_combo.setFixedWidth(120)
         header.addWidget(self._mode_combo)
@@ -259,6 +263,8 @@ class TreemapWidget(QWidget):
                 self.message_clicked.emit(int(key))
             except ValueError:
                 pass
+        elif self._view_mode == VIEW_COUNT:
+            self.sender_clicked.emit(key)
 
     @property
     def view_mode(self) -> int:
