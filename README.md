@@ -39,7 +39,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Smart size display** — deduplicates Gmail labels so total size reflects actual storage usage
 - **IMAP quota** — shows server-reported storage usage and limit
 - **Incremental scan** — rescan only fetches new/changed messages using UIDVALIDITY
-- **OAuth2 support** — Gmail (XOAUTH2) and Outlook (MSAL), plus password/app-password auth
+- **OAuth2 support** — Gmail (XOAUTH2) and Outlook (MSAL); Outlook OAuth2 requires a Microsoft 365 developer account or a work/school Azure tenant
 - **Filter bar** — filter by sender, subject, date range, size range, attachment presence
 - **AI assistant** — LLM-powered mailbox analysis (Ollama, LM Studio, OpenAI, Anthropic) with dynamic model dropdowns and Refresh to discover local models; find misfilings, dead folders, sender overlap; apply AI-suggested IMAP moves with one click
 - **Bulk unsubscribe** — right-click selected messages to unsubscribe from mailing lists; supports RFC 8058 one-click unsubscribe (silent POST) and sandboxed browser for manual confirmation pages
@@ -87,12 +87,24 @@ uv run mailsweep-cli --host imap.gmail.com --username you@gmail.com
 [Google Cloud Console](https://console.cloud.google.com/) >
 APIs & Services > Credentials > OAuth 2.0 Client ID (Desktop app type).
 
+### Outlook / Hotmail Setup
+
+Microsoft has **disabled basic password authentication** for all Outlook.com and Hotmail consumer accounts. Password auth will fail with `BasicAuthBlocked`.
+
+**OAuth2 is the only supported method**, but it has requirements:
+
+- You must register an Azure app and obtain a Client ID
+- App registration requires a **Microsoft 365 Developer account** or a **work/school Microsoft account** (e.g. a company Azure tenant)
+- Personal Outlook.com / Hotmail accounts cannot create OAuth2 app registrations without one of the above
+
+**Workaround:** If you do not have access to an Azure tenant, consider exporting your mail via [Outlook's export tool](https://support.microsoft.com/en-us/office/export-or-backup-email-contacts-and-calendar-to-an-outlook-pst-file-14252b52-3075-4e9b-be4e-ff9ef1068f91) and importing into a provider that supports app passwords (Gmail, Yahoo, Fastmail).
+
 ### Other Providers
 
 | Provider | Host | Port | Auth |
 |----------|------|------|------|
 | Gmail | imap.gmail.com | 993 | App Password or OAuth2 |
-| Outlook | outlook.office365.com | 993 | Password or OAuth2 |
+| Outlook / Hotmail | outlook.office365.com | 993 | OAuth2 only (Microsoft has disabled basic password auth for consumer accounts) |
 | Yahoo | imap.mail.yahoo.com | 993 | App Password |
 | ProtonMail | 127.0.0.1 | 1143 | Bridge password |
 | Fastmail | imap.fastmail.com | 993 | App Password |
