@@ -479,6 +479,7 @@ class MainWindow(QMainWindow):
         sender_filter: list[str] = getattr(self, "_sender_filter", [])
         if sender_filter:
             filter_kwargs = self._filter_bar.get_filter_kwargs()
+            filter_kwargs.pop("from_filter", None)  # supplied explicitly per-sender below
             seen: set[tuple[int, int]] = set()
             messages = []
             for email in sender_filter:
