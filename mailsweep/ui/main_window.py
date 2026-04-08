@@ -37,6 +37,7 @@ from mailsweep.ui.folder_panel import UNLABELLED_ID, FolderPanel
 from mailsweep.ui.message_table import MessageTableView
 from mailsweep.ui.progress_panel import ProgressPanel
 from mailsweep.ui.treemap_widget import (
+    VIEW_COUNT,
     VIEW_FOLDERS,
     VIEW_MESSAGES,
     VIEW_RECEIVERS,
@@ -611,6 +612,40 @@ class MainWindow(QMainWindow):
                 )
                 for m in messages if m.size_bytes > 0
             ]
+
+        elif mode == VIEW_COUNT:
+            if is_unlabelled:
+                messages = self._query_unlabelled(order_by="size_bytes DESC", limit=5000)
+                from collections import Counter
+                counts: Counter[str] = Counter()
+                sizes: dict[str, int] = {}
+                for m in messages:
+                    addr = m.from_addr or "(unknown)"
+                    counts[addr] += 1
+                    sizes[addr] = sizes.get(addr, 0) + m.size_bytes
+                items = [
+                    TreemapItem(
+                        key=addr,
+                        label=addr,
+                        sublabel=human_size(sizes[addr]),
+                        size_bytes=count,
+                        display_str=f"{count} msgs",
+                    )
+                    for addr, count in counts.most_common()
+                ]
+            else:
+                folder_ids = self._get_active_folder_ids()
+                rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
+                items = [
+                    TreemapItem(
+                        key=row["sender_email"],
+                        label=row["sender_email"],
+                        sublabel=human_size(row["total_size_bytes"]),
+                        size_bytes=row["message_count"],
+                        display_str=f"{row['message_count']} msgs",
+                    )
+                    for row in rows if row["message_count"] > 0
+                ]
 
         else:
             items = []

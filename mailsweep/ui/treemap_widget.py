@@ -271,6 +271,8 @@ class TreemapWidget(QWidget):
                 self.message_clicked.emit(int(key))
             except ValueError:
                 pass
+        elif self._view_mode == VIEW_COUNT:
+            self.sender_clicked.emit(key)
 
     def _on_item_right_clicked(self, key: str, global_pos: QPoint) -> None:
         self.context_menu_requested.emit(key, self._view_mode, global_pos)

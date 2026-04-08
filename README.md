@@ -166,6 +166,7 @@ change the view mode.
 | **Senders** | One tile per unique sender email, sized by total bytes from that sender | Identifying who is flooding your inbox with large mail |
 | **Receivers** | One tile per recipient address, sized by total bytes to that address | Useful in Sent folders to see who you send large mail to |
 | **Messages** | One tile per individual message, sized by message size | Finding the single largest messages to delete |
+| **Count** | One tile per sender, sized by number of emails received from that sender | Spotting spammers — a single address sending 50+ emails shows up as a large tile even if the individual messages are small |
 
 **Drill-down (Folders mode):** Click any folder tile to zoom into its sub-labels. Click a
 leaf folder to see its top individual messages. Click **All Folders** in the left tree to

@@ -72,6 +72,6 @@ if sys.platform == 'darwin':
         info_plist={
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
-            'CFBundleShortVersionString': '0.5.8.post1',
+            'CFBundleShortVersionString': '0.5.9',
         },
     )
