@@ -47,7 +47,8 @@ BLOCKLIST_COMMUNITY_URL: str = "https://raw.githubusercontent.com/dchau360/MailS
 
 AI_PROVIDER: str = "ollama"              # ollama | openai | anthropic | custom
 AI_BASE_URL: str = "http://localhost:11434/v1"
-AI_API_KEY: str = ""
+AI_API_KEY: str = ""                     # key for the currently active provider
+AI_API_KEYS: dict[str, str] = {}        # per-provider keys, keyed by provider name
 AI_MODEL: str = "llama3.2"
 
 
@@ -74,20 +75,23 @@ def save_settings() -> None:
     except Exception as exc:
         logger.warning("Could not save settings: %s", exc)
 
-    # Store AI API key in system keyring
-    if AI_API_KEY:
-        try:
-            from mailsweep.utils.keyring_store import set_password
+    # Store AI API keys in system keyring (one entry per provider)
+    try:
+        from mailsweep.utils.keyring_store import set_password
+        for _provider, _key in AI_API_KEYS.items():
+            set_password("ai_api_key", f"mailsweep_ai_{_provider}", _key)
+        # Legacy single-key entry kept for backwards compat
+        if AI_API_KEY:
             set_password("ai_api_key", "mailsweep_ai", AI_API_KEY)
-        except Exception as exc:
-            logger.warning("Could not save AI API key to keyring: %s", exc)
+    except Exception as exc:
+        logger.warning("Could not save AI API key to keyring: %s", exc)
 
 
 def load_settings() -> None:
     """Load persisted settings from disk, falling back to defaults."""
     global SCAN_BATCH_SIZE, MESSAGE_TABLE_MAX_ROWS, DEFAULT_SAVE_DIR
     global UNLABELLED_MODE, SKIP_ALL_MAIL, BLOCKLIST_AUTO_MOVE, BLOCKLIST_USE_COMMUNITY, BLOCKLIST_COMMUNITY_URL
-    global AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL
+    global AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_API_KEYS, AI_MODEL
     if not SETTINGS_PATH.exists():
         return
     try:
@@ -111,12 +115,19 @@ def load_settings() -> None:
     except Exception as exc:
         logger.warning("Could not load settings: %s", exc)
 
-    # Load AI API key from keyring
+    # Load AI API keys from keyring (per-provider entries)
     try:
         from mailsweep.utils.keyring_store import get_password
-        key = get_password("ai_api_key", "mailsweep_ai")
-        if key:
-            AI_API_KEY = key
+        for _provider in ("ollama", "lm-studio", "openai", "anthropic", "custom"):
+            _key = get_password("ai_api_key", f"mailsweep_ai_{_provider}")
+            if _key:
+                AI_API_KEYS[_provider] = _key
+        # Legacy fallback: single key entry
+        if not AI_API_KEYS.get(AI_PROVIDER):
+            _key = get_password("ai_api_key", "mailsweep_ai")
+            if _key:
+                AI_API_KEYS[AI_PROVIDER] = _key
+        AI_API_KEY = AI_API_KEYS.get(AI_PROVIDER, "")
     except Exception as exc:
         logger.debug("Could not load AI API key from keyring: %s", exc)
 

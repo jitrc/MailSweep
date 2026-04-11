@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 import mailsweep.config as cfg
-from mailsweep.ai.providers import PROVIDER_MODELS, PROVIDER_PRESETS, fetch_model_list
+from mailsweep.ai.providers import PROVIDER_MODELS, PROVIDER_PRESETS, detect_and_fetch, fetch_anthropic_models, fetch_model_list, normalize_url
 
 
 class SettingsDialog(QDialog):
@@ -102,8 +102,13 @@ class SettingsDialog(QDialog):
         ai_form.addRow("Provider:", self._ai_provider)
 
         self._ai_base_url = QLineEdit()
-        self._ai_base_url.setPlaceholderText("http://localhost:11434/v1")
+        self._ai_base_url.setPlaceholderText("http://host:port/v1  or  host:port")
+        self._ai_base_url.editingFinished.connect(self._on_url_editing_finished)
         ai_form.addRow("Base URL:", self._ai_base_url)
+
+        self._ai_type_label = QLabel("<i>API type: OpenAI-compatible (auto-detected)</i>")
+        self._ai_type_label.setVisible(False)
+        ai_form.addRow("", self._ai_type_label)
 
         self._ai_api_key_label = QLabel("API Key:")
         self._ai_api_key = QLineEdit()
@@ -147,58 +152,102 @@ class SettingsDialog(QDialog):
         self._blocklist_use_community.setChecked(cfg.BLOCKLIST_USE_COMMUNITY)
         self._blocklist_community_url.setText(cfg.BLOCKLIST_COMMUNITY_URL)
 
+        # Block signals so setting the provider index doesn't prematurely
+        # trigger a fetch with the wrong (preset) URL.
+        self._ai_provider.blockSignals(True)
         idx = self._ai_provider.findText(cfg.AI_PROVIDER)
         if idx >= 0:
             self._ai_provider.setCurrentIndex(idx)
+        self._ai_provider.blockSignals(False)
+
+        self._active_provider = cfg.AI_PROVIDER
+        self._provider_models: dict[str, str] = {cfg.AI_PROVIDER: cfg.AI_MODEL}
+        self._provider_urls: dict[str, str] = {cfg.AI_PROVIDER: cfg.AI_BASE_URL}
         self._ai_base_url.setText(cfg.AI_BASE_URL)
         self._ai_api_key.setText(cfg.AI_API_KEY)
         self._populate_model_combo(cfg.AI_PROVIDER)
         self._ai_model.setCurrentText(cfg.AI_MODEL)
         self._update_key_visibility()
+        # Fetch with the correct saved URL
+        self._on_refresh_models()
+
+    def _on_url_editing_finished(self) -> None:
+        self._on_refresh_models()
 
     def _on_ai_provider_changed(self, provider: str) -> None:
+        # Save current key, model, and URL for the outgoing provider
+        cfg.AI_API_KEYS[self._active_provider] = self._ai_api_key.text().strip()
+        self._provider_models[self._active_provider] = self._ai_model.currentText()
+        self._provider_urls[self._active_provider] = self._ai_base_url.text().strip()
+        self._active_provider = provider
         preset = PROVIDER_PRESETS.get(provider, {})
-        if preset.get("base_url"):
-            self._ai_base_url.setText(preset["base_url"])
+        saved_url = self._provider_urls.get(provider)
+        self._ai_base_url.setText(saved_url if saved_url is not None else preset.get("base_url", ""))
+        self._ai_api_key.setText(cfg.AI_API_KEYS.get(provider, ""))
         self._populate_model_combo(provider)
-        if preset.get("model"):
-            self._ai_model.setCurrentText(preset["model"])
+        # Restore saved model for this provider, falling back to preset default
+        saved_model = self._provider_models.get(provider) or preset.get("model", "")
+        if saved_model:
+            self._ai_model.setCurrentText(saved_model)
         self._update_key_visibility()
+        self._on_refresh_models()
 
     def _populate_model_combo(self, provider: str) -> None:
         self._ai_model.clear()
+        # Skip static list for providers where we auto-fetch real models
+        if provider in ("ollama", "lm-studio", "custom"):
+            return
         models = PROVIDER_MODELS.get(provider, [])
         if models:
             self._ai_model.addItems(models)
 
     def _update_key_visibility(self) -> None:
-        hide = self._ai_provider.currentText() in ("ollama", "lm-studio")
-        self._ai_api_key_label.setVisible(not hide)
-        self._ai_api_key.setVisible(not hide)
+        provider = self._ai_provider.currentText()
+        hide_key = provider in ("ollama", "lm-studio")
+        self._ai_api_key_label.setVisible(not hide_key)
+        self._ai_api_key.setVisible(not hide_key)
+        self._ai_type_label.setVisible(provider == "custom")
 
     def _on_refresh_models(self) -> None:
-        base_url = self._ai_base_url.text().strip()
+        base_url = normalize_url(self._ai_base_url.text().strip())
         api_key = self._ai_api_key.text().strip()
-        if not base_url:
+        provider = self._ai_provider.currentText()
+        if not base_url and provider != "anthropic":
             return
         self._refresh_models_btn.setEnabled(False)
         self._refresh_models_btn.setText("…")
+        self._pending_model = self._ai_model.currentText()
+        self._ai_model.clear()
         from PyQt6.QtCore import QThread, QObject, pyqtSignal
 
+        use_detect = provider == "custom"
+        if use_detect:
+            self._ai_type_label.setText("<i>API type: detecting…</i>")
+
         class _Fetcher(QObject):
-            done = pyqtSignal(list)
-            def __init__(self, url, key):
+            done = pyqtSignal(str, list)
+            def __init__(self, url, key, prov, detect):
                 super().__init__()
                 self._url = url
                 self._key = key
+                self._prov = prov
+                self._detect = detect
             def run(self):
-                self.done.emit(fetch_model_list(self._url, self._key))
+                if self._prov == "anthropic":
+                    models = fetch_anthropic_models(self._key)
+                    self.done.emit("", models)
+                elif self._detect:
+                    api_type, models = detect_and_fetch(self._url, self._key)
+                    self.done.emit(api_type, models)
+                else:
+                    models = fetch_model_list(self._url, self._key)
+                    self.done.emit("", models)
 
         thread = QThread(self)
-        worker = _Fetcher(base_url, api_key)
+        worker = _Fetcher(base_url, api_key, provider, use_detect)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.done.connect(lambda models: self._on_models_fetched(models))
+        worker.done.connect(self._on_models_fetched)
         worker.done.connect(thread.quit)
         worker.done.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -206,17 +255,25 @@ class SettingsDialog(QDialog):
         self._refresh_worker = worker
         thread.start()
 
-    def _on_models_fetched(self, models: list[str]) -> None:
+    def _on_models_fetched(self, api_type: str, models: list[str]) -> None:
         self._refresh_models_btn.setEnabled(True)
         self._refresh_models_btn.setText("Refresh")
+        if api_type:
+            self._ai_type_label.setText(f"<i>API type: {api_type} (auto-detected)</i>")
+        to_restore = getattr(self, "_pending_model", "") or ""
         if not models:
+            # Fall back to static list so the combo isn't left blank
+            static = PROVIDER_MODELS.get(self._ai_provider.currentText(), [])
+            if static:
+                self._ai_model.addItems(static)
+            if to_restore:
+                self._ai_model.setCurrentText(to_restore)
             return
-        current = self._ai_model.currentText()
         existing = {self._ai_model.itemText(i) for i in range(self._ai_model.count())}
         for m in models:
             if m not in existing:
                 self._ai_model.addItem(m)
-        self._ai_model.setCurrentText(current)
+        self._ai_model.setCurrentText(to_restore or models[0])
 
     def _on_browse(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -241,6 +298,7 @@ class SettingsDialog(QDialog):
         cfg.AI_PROVIDER = self._ai_provider.currentText()
         cfg.AI_BASE_URL = self._ai_base_url.text().strip()
         cfg.AI_API_KEY = self._ai_api_key.text().strip()
+        cfg.AI_API_KEYS[cfg.AI_PROVIDER] = cfg.AI_API_KEY
         cfg.AI_MODEL = self._ai_model.currentText().strip()
 
         cfg.save_settings()
