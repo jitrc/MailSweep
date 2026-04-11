@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 from typing import NamedTuple
 
@@ -11,6 +12,9 @@ from mailsweep.imap.connection import connect
 from mailsweep.models.account import Account
 
 logger = logging.getLogger(__name__)
+
+_COPY_BATCH_SIZE = 15  # Yahoo caps UID COPY at 15 UIDs per command
+_COPY_RATE_LIMIT_WAIT = 1.0  # seconds to wait before retrying after a rate-limit error
 
 
 class MoveOp(NamedTuple):
@@ -62,12 +66,13 @@ class MoveWorker(QObject):
         for op in moves:
             by_src[op.src_folder].append(op)
 
-        # Detect MOVE capability once
-        try:
-            caps = client.capabilities()
-            has_move = b"MOVE" in caps
-        except Exception:
-            has_move = False
+        # Ensure each unique destination folder exists exactly once before
+        # entering the SELECT loop (avoids redundant LIST calls per source folder).
+        ensured_folders: set[str] = set()
+        for op in moves:
+            if op.dst_folder not in ensured_folders:
+                _ensure_folder(client, op.dst_folder)
+                ensured_folders.add(op.dst_folder)
 
         try:
             for src_folder, ops in by_src.items():
@@ -91,40 +96,61 @@ class MoveWorker(QObject):
                     if self._cancel_requested:
                         break
 
-                    self.progress.emit(done, total, f"Moving to {dst_folder}…")
+                    # Chunk to avoid provider rate limits (Yahoo: [LIMIT] UID COPY)
+                    for chunk_start in range(0, len(uids), _COPY_BATCH_SIZE):
+                        if self._cancel_requested:
+                            break
 
-                    try:
-                        if has_move:
-                            client.move(uids, dst_folder)
-                        else:
-                            # Fallback: COPY + DELETE + EXPUNGE
-                            client.copy(uids, dst_folder)
-                            client.delete_messages(uids)
-                            client.expunge(uids)
+                        chunk = uids[chunk_start:chunk_start + _COPY_BATCH_SIZE]
+                        self.progress.emit(done, total, f"Moving to {dst_folder}: {done}/{total}…")
 
-                        # Update local DB cache
-                        if conn and folder_repo and msg_repo:
-                            _update_db_after_move(
-                                conn, folder_repo, msg_repo,
-                                uids, src_folder, dst_folder, account.id,
-                            )
+                        for attempt in range(2):
+                            try:
+                                # Use COPY + flag + expunge — more reliable than IMAP MOVE
+                                # across providers (Yahoo advertises MOVE but executes it unreliably).
+                                client.copy(chunk, dst_folder)
+                                client.set_flags(chunk, [b"\\Deleted"])
+                                try:
+                                    client.uid_expunge(chunk)
+                                except Exception:
+                                    client.expunge()
 
-                        done += len(uids)
-                        logger.info(
-                            "Moved %d message(s) from %s to %s",
-                            len(uids), src_folder, dst_folder,
-                        )
+                                # Update local DB cache
+                                if conn and folder_repo and msg_repo:
+                                    _update_db_after_move(
+                                        conn, folder_repo, msg_repo,
+                                        chunk, src_folder, dst_folder, account.id,
+                                    )
 
-                    except Exception as exc:
-                        logger.error(
-                            "Move failed %s → %s: %s", src_folder, dst_folder, exc
-                        )
-                        self.error.emit(
-                            f"Move failed ({src_folder} → {dst_folder}): {exc}"
-                        )
-                        done += len(uids)
+                                done += len(chunk)
+                                logger.info(
+                                    "Moved %d message(s) from %s to %s",
+                                    len(chunk), src_folder, dst_folder,
+                                )
+                                break  # success
 
-                    self.progress.emit(done, total, f"Moved {done}/{total}")
+                            except Exception as exc:
+                                if attempt == 0 and "LIMIT" in str(exc).upper():
+                                    logger.warning(
+                                        "Rate limit hit moving %s → %s, retrying in %.0fs…",
+                                        src_folder, dst_folder, _COPY_RATE_LIMIT_WAIT,
+                                    )
+                                    time.sleep(_COPY_RATE_LIMIT_WAIT)
+                                else:
+                                    logger.error(
+                                        "Move failed %s → %s: %s", src_folder, dst_folder, exc
+                                    )
+                                    self.error.emit(
+                                        f"Move failed ({src_folder} → {dst_folder}): {exc}"
+                                    )
+                                    done += len(chunk)
+                                    break
+
+                        self.progress.emit(done, total, f"Moved {done}/{total}")
+
+                        # Brief pause between chunks to avoid rate limits
+                        if chunk_start + _COPY_BATCH_SIZE < len(uids):
+                            time.sleep(1.0)
 
         finally:
             try:
@@ -133,6 +159,23 @@ class MoveWorker(QObject):
                 pass
 
         self.finished.emit(done)
+
+
+def _ensure_folder(client, folder_name: str) -> None:
+    """Create an IMAP folder if it doesn't already exist.
+
+    Uses LIST to check existence so the currently-selected folder is not changed.
+    """
+    try:
+        exists = bool(client.list_folders(pattern=folder_name))
+    except Exception:
+        exists = False
+    if not exists:
+        try:
+            client.create_folder(folder_name)
+            logger.info("Created IMAP folder: %s", folder_name)
+        except Exception as exc:
+            logger.warning("Could not create folder %s: %s", folder_name, exc)
 
 
 def _update_db_after_move(conn, folder_repo, msg_repo, uids, src_folder, dst_folder, account_id):

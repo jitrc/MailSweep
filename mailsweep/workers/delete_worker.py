@@ -38,12 +38,14 @@ class DeleteWorker(QObject):
         account: Account,
         messages: list[Message],
         folder_id_to_name: dict[int, str],
+        permanent: bool = False,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._account = account
         self._messages = messages
         self._folder_id_to_name = folder_id_to_name
+        self._permanent = permanent
         self._cancel_requested = False
 
     def cancel(self) -> None:
@@ -95,7 +97,7 @@ class DeleteWorker(QObject):
 
                 try:
                     # COPY to Trash in small chunks with delay to avoid rate limits
-                    if trash_folder and folder_name != trash_folder:
+                    if not self._permanent and trash_folder and folder_name != trash_folder:
                         for i in range(0, n, _COPY_BATCH_SIZE):
                             if self._cancel_requested:
                                 break
@@ -105,7 +107,7 @@ class DeleteWorker(QObject):
                                     client.copy(chunk, trash_folder)
                                     break
                                 except Exception as exc:
-                                    if "rate limit" in str(exc).lower() and attempt < _COPY_MAX_RETRIES - 1:
+                                    if "LIMIT" in str(exc).upper() and attempt < _COPY_MAX_RETRIES - 1:
                                         logger.warning("COPY rate limit hit, retrying in %.0fs…", _COPY_RETRY_DELAY)
                                         self.progress.emit(done, total, f"Rate limited — waiting {int(_COPY_RETRY_DELAY)}s…")
                                         time.sleep(_COPY_RETRY_DELAY)

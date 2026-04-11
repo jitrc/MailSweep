@@ -22,6 +22,7 @@ DB_PATH: Path = DATA_DIR / "mailsweep.db"
 DEFAULT_SAVE_DIR: Path = Path.home() / "MailSweep_Attachments"
 LOG_PATH: Path = DATA_DIR / "mailsweep.log"
 SETTINGS_PATH: Path = CONFIG_DIR / "settings.json"
+COMMUNITY_BLOCKLIST_PATH: Path = CONFIG_DIR / "community_blocklist.txt"
 
 for _d in (DATA_DIR, CONFIG_DIR, DEFAULT_SAVE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -40,6 +41,9 @@ TREEMAP_MIN_SIZE_BYTES: int = 1024  # Don't draw tiles smaller than 1 KB
 
 UNLABELLED_MODE: str = "no_thread"       # no_thread | in_reply_to | gmail_thread
 SKIP_ALL_MAIL: bool = False              # Exclude [Gmail]/All Mail from sync, counts, filters, viz
+BLOCKLIST_AUTO_MOVE: bool = False        # Move blocked emails automatically after scan (no prompt)
+BLOCKLIST_USE_COMMUNITY: bool = False    # Include community blocklist from GitHub when checking
+BLOCKLIST_COMMUNITY_URL: str = "https://raw.githubusercontent.com/dchau360/MailSweep-Blocklist/main/blocklist.txt"
 
 AI_PROVIDER: str = "ollama"              # ollama | openai | anthropic | custom
 AI_BASE_URL: str = "http://localhost:11434/v1"
@@ -57,6 +61,9 @@ def save_settings() -> None:
         "default_save_dir": str(DEFAULT_SAVE_DIR),
         "unlabelled_mode": UNLABELLED_MODE,
         "skip_all_mail": SKIP_ALL_MAIL,
+        "blocklist_auto_move": BLOCKLIST_AUTO_MOVE,
+        "blocklist_use_community": BLOCKLIST_USE_COMMUNITY,
+        "blocklist_community_url": BLOCKLIST_COMMUNITY_URL,
         "ai_provider": AI_PROVIDER,
         "ai_base_url": AI_BASE_URL,
         "ai_model": AI_MODEL,
@@ -79,7 +86,7 @@ def save_settings() -> None:
 def load_settings() -> None:
     """Load persisted settings from disk, falling back to defaults."""
     global SCAN_BATCH_SIZE, MESSAGE_TABLE_MAX_ROWS, DEFAULT_SAVE_DIR
-    global UNLABELLED_MODE, SKIP_ALL_MAIL
+    global UNLABELLED_MODE, SKIP_ALL_MAIL, BLOCKLIST_AUTO_MOVE, BLOCKLIST_USE_COMMUNITY, BLOCKLIST_COMMUNITY_URL
     global AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL
     if not SETTINGS_PATH.exists():
         return
@@ -95,6 +102,9 @@ def load_settings() -> None:
         if saved_mode in ("no_thread", "in_reply_to", "gmail_thread"):
             UNLABELLED_MODE = saved_mode
         SKIP_ALL_MAIL = bool(data.get("skip_all_mail", SKIP_ALL_MAIL))
+        BLOCKLIST_AUTO_MOVE = bool(data.get("blocklist_auto_move", BLOCKLIST_AUTO_MOVE))
+        BLOCKLIST_USE_COMMUNITY = bool(data.get("blocklist_use_community", BLOCKLIST_USE_COMMUNITY))
+        BLOCKLIST_COMMUNITY_URL = data.get("blocklist_community_url", BLOCKLIST_COMMUNITY_URL)
         AI_PROVIDER = data.get("ai_provider", AI_PROVIDER)
         AI_BASE_URL = data.get("ai_base_url", AI_BASE_URL)
         AI_MODEL = data.get("ai_model", AI_MODEL)
@@ -109,6 +119,23 @@ def load_settings() -> None:
             AI_API_KEY = key
     except Exception as exc:
         logger.debug("Could not load AI API key from keyring: %s", exc)
+
+
+def load_community_patterns() -> set[str]:
+    """Load community blocklist patterns from the local cache file.
+
+    Returns an empty set if the file doesn't exist or community list is disabled.
+    """
+    if not BLOCKLIST_USE_COMMUNITY:
+        return set()
+    if not COMMUNITY_BLOCKLIST_PATH.exists():
+        return set()
+    try:
+        lines = COMMUNITY_BLOCKLIST_PATH.read_text(encoding="utf-8").splitlines()
+        return {l.strip().lower() for l in lines if l.strip() and not l.strip().startswith("#")}
+    except Exception as exc:
+        logger.warning("Could not load community blocklist: %s", exc)
+        return set()
 
 
 # Load on import so settings are available immediately

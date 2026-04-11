@@ -79,6 +79,19 @@ class SettingsDialog(QDialog):
         general_group.setLayout(form)
         layout.addWidget(general_group)
 
+        # ── Blocklist group ───────────────────────────────────────────────────
+        blocklist_group = QGroupBox("Blocklist")
+        bl_form = QFormLayout()
+        self._blocklist_auto_move = QCheckBox("Automatically move blocked emails after scan (no prompt)")
+        bl_form.addRow("", self._blocklist_auto_move)
+        self._blocklist_use_community = QCheckBox("Enable community blocklist (checked against local list during scan)")
+        bl_form.addRow("", self._blocklist_use_community)
+        self._blocklist_community_url = QLineEdit()
+        self._blocklist_community_url.setPlaceholderText("https://raw.githubusercontent.com/…/blocklist.txt")
+        bl_form.addRow("Community URL:", self._blocklist_community_url)
+        blocklist_group.setLayout(bl_form)
+        layout.addWidget(blocklist_group)
+
         # ── AI group ─────────────────────────────────────────────────────────
         ai_group = QGroupBox("AI Assistant")
         ai_form = QFormLayout()
@@ -130,6 +143,9 @@ class SettingsDialog(QDialog):
             self._unlabelled_mode.setCurrentIndex(mode_idx)
         self._skip_all_mail.setChecked(cfg.SKIP_ALL_MAIL)
         self._skip_all_mail_note.setVisible(cfg.SKIP_ALL_MAIL)
+        self._blocklist_auto_move.setChecked(cfg.BLOCKLIST_AUTO_MOVE)
+        self._blocklist_use_community.setChecked(cfg.BLOCKLIST_USE_COMMUNITY)
+        self._blocklist_community_url.setText(cfg.BLOCKLIST_COMMUNITY_URL)
 
         idx = self._ai_provider.findText(cfg.AI_PROVIDER)
         if idx >= 0:
@@ -218,6 +234,9 @@ class SettingsDialog(QDialog):
 
         cfg.UNLABELLED_MODE = self._unlabelled_mode.currentData()
         cfg.SKIP_ALL_MAIL = self._skip_all_mail.isChecked()
+        cfg.BLOCKLIST_AUTO_MOVE = self._blocklist_auto_move.isChecked()
+        cfg.BLOCKLIST_USE_COMMUNITY = self._blocklist_use_community.isChecked()
+        cfg.BLOCKLIST_COMMUNITY_URL = self._blocklist_community_url.text().strip()
 
         cfg.AI_PROVIDER = self._ai_provider.currentText()
         cfg.AI_BASE_URL = self._ai_base_url.text().strip()

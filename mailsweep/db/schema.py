@@ -55,6 +55,13 @@ CREATE INDEX IF NOT EXISTS idx_messages_msgid      ON messages(message_id);
 CREATE INDEX IF NOT EXISTS idx_messages_in_reply_to ON messages(in_reply_to);
 CREATE INDEX IF NOT EXISTS idx_messages_thread_id   ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_identity   ON messages(from_addr, subject, date, size_bytes);
+
+CREATE TABLE IF NOT EXISTS blocked_senders (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern    TEXT NOT NULL UNIQUE,   -- email or @domain
+    source     TEXT NOT NULL DEFAULT 'local',  -- 'local' or 'github'
+    added_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 

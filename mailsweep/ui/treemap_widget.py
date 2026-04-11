@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from PyQt6.QtCore import QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -55,7 +55,8 @@ VIEW_COUNT = 4
 
 class _TreemapCanvas(QWidget):
     """Internal paint surface for the treemap tiles."""
-    item_clicked = pyqtSignal(str)  # key
+    item_clicked = pyqtSignal(str)              # key (left-click)
+    item_right_clicked = pyqtSignal(str, QPoint)  # key, global_pos (right-click)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -194,11 +195,16 @@ class _TreemapCanvas(QWidget):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        pos = event.position()
         if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.position()
             for rect, item in self._rects:
                 if rect.contains(pos):
                     self.item_clicked.emit(item.key)
+                    break
+        elif event.button() == Qt.MouseButton.RightButton:
+            for rect, item in self._rects:
+                if rect.contains(pos):
+                    self.item_right_clicked.emit(item.key, event.globalPosition().toPoint())
                     break
         super().mousePressEvent(event)
 
@@ -208,12 +214,13 @@ class TreemapWidget(QWidget):
     Composite widget: view-mode selector + treemap canvas.
     Emits typed signals depending on view mode.
     """
-    folder_clicked = pyqtSignal(int)     # folder_id
-    folder_key_clicked = pyqtSignal(str) # raw key (folder_id, "path:...", or "msg:...")
-    sender_clicked = pyqtSignal(str)     # from_addr
-    receiver_clicked = pyqtSignal(str)   # to_addr
-    message_clicked = pyqtSignal(int)    # message uid
-    view_mode_changed = pyqtSignal(int)  # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES / VIEW_RECEIVERS / VIEW_COUNT
+    folder_clicked = pyqtSignal(int)           # folder_id
+    folder_key_clicked = pyqtSignal(str)       # raw key (folder_id, "path:...", or "msg:...")
+    sender_clicked = pyqtSignal(str)           # from_addr
+    receiver_clicked = pyqtSignal(str)         # to_addr
+    message_clicked = pyqtSignal(int)          # message uid
+    view_mode_changed = pyqtSignal(int)        # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES / VIEW_RECEIVERS
+    context_menu_requested = pyqtSignal(str, int, QPoint)  # key, view_mode, global_pos
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -232,7 +239,7 @@ class TreemapWidget(QWidget):
         self._mode_combo.addItem("Senders", VIEW_SENDERS)
         self._mode_combo.addItem("Receivers", VIEW_RECEIVERS)
         self._mode_combo.addItem("Messages", VIEW_MESSAGES)
-        self._mode_combo.addItem("Count", VIEW_COUNT)
+        # COUNT view removed — use Actions → Sender List instead
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self._mode_combo.setFixedWidth(120)
         header.addWidget(self._mode_combo)
@@ -241,6 +248,7 @@ class TreemapWidget(QWidget):
 
         self._canvas = _TreemapCanvas()
         self._canvas.item_clicked.connect(self._on_item_clicked)
+        self._canvas.item_right_clicked.connect(self._on_item_right_clicked)
         layout.addWidget(self._canvas, stretch=1)
 
     def _on_mode_changed(self, idx: int) -> None:
@@ -265,6 +273,9 @@ class TreemapWidget(QWidget):
                 pass
         elif self._view_mode == VIEW_COUNT:
             self.sender_clicked.emit(key)
+
+    def _on_item_right_clicked(self, key: str, global_pos: QPoint) -> None:
+        self.context_menu_requested.emit(key, self._view_mode, global_pos)
 
     @property
     def view_mode(self) -> int:

@@ -281,9 +281,13 @@ class MessageTableView(QTableView):
     backup_delete_requested = pyqtSignal(list)  # list[Message]
     delete_requested = pyqtSignal(list)     # list[Message]
     move_requested = pyqtSignal(list)       # list[Message]
-    remove_label_requested = pyqtSignal(list)  # list[Message]
+    remove_label_requested = pyqtSignal(list)       # list[Message]
     unsubscribe_requested = pyqtSignal(list)        # list[Message]
     unsubscribe_delete_requested = pyqtSignal(list) # list[Message]
+    delete_all_from_sender_requested = pyqtSignal(list)         # list[Message]
+    perm_delete_requested = pyqtSignal(list)                    # list[Message]
+    perm_delete_sender_requested = pyqtSignal(list)             # list[Message]
+    block_perm_delete_sender_requested = pyqtSignal(list)       # list[Message]
     view_headers_requested = pyqtSignal(object)  # Message
     show_to_toggled = pyqtSignal(bool)      # emitted on manual header toggle
 
@@ -383,24 +387,34 @@ class MessageTableView(QTableView):
         backup_act = menu.addAction(f"Backup ({n} msg(s))")
         backup_del_act = menu.addAction(f"Backup && Delete ({n} msg(s))")
         delete_act = menu.addAction(f"Delete ({n} msg(s))")
+        perm_delete_act = menu.addAction(f"Permanent Delete ({n} msg(s))")
         menu.addSeparator()
         move_act = menu.addAction(f"Move to… ({n} msg(s))")
         remove_label_act = menu.addAction(f"Remove Label ({n} msg(s))")
         menu.addSeparator()
-        unsub_act = menu.addAction(f"Unsubscribe ({n} msg(s))")
-        unsub_del_act = menu.addAction(f"Unsubscribe && Delete ({n} msg(s))")
+        unsub_act = menu.addAction(f"Unsubscribe && Block ({n} msg(s))")
+        unsub_del_act = menu.addAction(f"Unsubscribe, Block && Delete ({n} msg(s))")
         menu.addSeparator()
-        headers_act = menu.addAction("View Headers…")
+        n_addrs = len({m.from_addr for m in selected})
+        block_act               = menu.addAction(f"Delete All From Sender ({n_addrs} address(es))")
+        perm_sender_act         = menu.addAction(f"Permanent Delete All From Sender ({n_addrs} address(es))")
+        blk_perm_sender_act     = menu.addAction(f"Block && Permanent Delete All From Sender ({n_addrs} address(es))")
+        menu.addSeparator()
+        headers_act = menu.addAction("View Headers\u2026")
 
         extract_act.triggered.connect(lambda: self.extract_requested.emit(selected))
         detach_act.triggered.connect(lambda: self.detach_requested.emit(selected))
         backup_act.triggered.connect(lambda: self.backup_requested.emit(selected))
         backup_del_act.triggered.connect(lambda: self.backup_delete_requested.emit(selected))
         delete_act.triggered.connect(lambda: self.delete_requested.emit(selected))
+        perm_delete_act.triggered.connect(lambda: self.perm_delete_requested.emit(selected))
         move_act.triggered.connect(lambda: self.move_requested.emit(selected))
         remove_label_act.triggered.connect(lambda: self.remove_label_requested.emit(selected))
         unsub_act.triggered.connect(lambda: self.unsubscribe_requested.emit(selected))
         unsub_del_act.triggered.connect(lambda: self.unsubscribe_delete_requested.emit(selected))
+        block_act.triggered.connect(lambda: self.delete_all_from_sender_requested.emit(selected))
+        perm_sender_act.triggered.connect(lambda: self.perm_delete_sender_requested.emit(selected))
+        blk_perm_sender_act.triggered.connect(lambda: self.block_perm_delete_sender_requested.emit(selected))
         headers_act.triggered.connect(
             lambda: self.view_headers_requested.emit(selected[0]) if selected else None
         )

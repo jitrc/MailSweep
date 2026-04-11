@@ -47,14 +47,28 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Select-all checkbox** — checkbox in the message table header selects or deselects all visible messages; shows tri-state (partial) indicator when only some rows are checked
 - **Fast batch delete** — bulk delete sends messages to Trash in optimised batches with automatic rate-limit retry; significantly faster than deleting one message at a time
 - **Provider profiles** — Add Account dialog includes preset profiles for Gmail, Outlook, Yahoo, ProtonMail, and Fastmail that auto-fill host, port, SSL, and auth type
-- **Count view** — treemap view that sizes tiles by number of emails per sender rather than storage size; makes it easy to spot and bulk-delete spam where a single address has sent 50+ messages
+- **Senders sidebar** — inline sender list in the left panel; click a sender to filter the message table to only their messages; right-click for the full sender action menu
+- **Sender List** — browse all unique senders sorted by message count or size; status bar shows total size across all senders; multi-select and right-click to delete, block and delete, backup and delete, permanent delete, or block and permanent delete in one action
+- **Permanent Delete** — right-click any message selection to permanently expunge without moving to Trash first; also available per-sender from the Sender List, Senders sidebar, and the message table context menu (includes Permanent Delete All From Sender and Block && Permanent Delete All From Sender)
+- **Empty Trash** — Actions → Empty Trash… permanently expunges all messages in the Trash folder in one step
+- **Sender blocklist** — block individual addresses or entire domains; blocked messages are automatically moved to a dedicated `MailSweep-Blocked` IMAP folder for review rather than deleted; supports a local blocklist (stored in SQLite) and an optional community blocklist (synced from any raw `.txt` URL); both lists are managed from Actions → Manage Blocklist
 
 ## Installation
+
+### macOS / Linux
+
+**Option A — Standalone executable (no Python required)**
+
+Download the latest release for your platform from the [releases page](https://github.com/jitrc/MailSweep/releases/latest):
+- **macOS:** `MailSweep-macos.dmg` — open the DMG and drag MailSweep to Applications
+- **Linux:** `MailSweep-linux.AppImage` — make executable and run: `chmod +x MailSweep-linux.AppImage && ./MailSweep-linux.AppImage`
+
+**Option B — Run from source**
 
 ```bash
 # Clone and install
 git clone https://github.com/jitrc/MailSweep.git
-cd mailsweep
+cd MailSweep
 uv sync --dev
 
 # Run the GUI
@@ -63,6 +77,33 @@ uv run mailsweep
 # Run the CLI (prints folder sizes, no GUI)
 uv run mailsweep-cli --host imap.gmail.com --username you@gmail.com
 ```
+
+### Windows
+
+**Option A — Standalone executable (no Python required)**
+
+Download `MailSweep-windows.exe` from the [latest release](https://github.com/jitrc/MailSweep/releases/latest) and double-click to run. Windows Defender SmartScreen may warn about an unrecognised publisher — click **More info → Run anyway**.
+
+**Option B — Run from source**
+
+1. Install [Python 3.11+](https://www.python.org/downloads/windows/) (check "Add Python to PATH" during setup)
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+3. Clone and run:
+   ```powershell
+   git clone https://github.com/jitrc/MailSweep.git
+   cd MailSweep
+   uv sync --dev
+   uv run mailsweep
+   ```
+
+**Windows notes:**
+- Credentials are stored in **Windows Credential Manager** (not in any file)
+- The SQLite cache is stored at `%LOCALAPPDATA%\mailsweep\mailsweep.db`
+- Settings are stored at `%APPDATA%\mailsweep\settings.json`
+- The community blocklist cache is at `%APPDATA%\mailsweep\community_blocklist.txt`
 
 ### Requirements
 
@@ -296,6 +337,58 @@ loaded on your local Ollama or LM Studio instance.
 
 ---
 
+### Senders Sidebar
+
+The **Senders** tab in the left panel shows all unique senders for the current account, sorted by message count. Click any sender to filter the message table to only their messages. Right-click for the full action menu (same options as Sender List below). Excludes Trash and MailSweep-Blocked from counts. Updates automatically when you switch accounts.
+
+---
+
+### Sender List
+
+**Actions → Sender List…**
+
+Shows all unique senders across your mailbox in a sortable, searchable table with message count and total size. The status bar shows the total size across all displayed senders, and updates to show the selected count and size when rows are highlighted. Useful for quickly identifying who is flooding your inbox.
+
+- **Filter** — type to narrow down by email address
+- **Sort** — click any column header to sort; defaults to message count descending
+- **Multi-select** — Ctrl+click or Shift+click to select multiple senders
+- **Right-click → Delete All From sender(s)** — move all messages from selected senders to Trash
+- **Right-click → Block && Delete All From sender(s)** — add to blocklist and move to Trash
+- **Right-click → Backup && Delete All From sender(s)** — download as .eml files then move to Trash
+- **Right-click → Permanent Delete All From sender(s)** — immediately expunge without moving to Trash
+- **Right-click → Block && Permanent Delete All From sender(s)** — add to blocklist and permanently expunge
+
+---
+
+### Sender Blocklist
+
+**Actions → Manage Blocklist**
+
+Block individual email addresses or entire domains from appearing in your inbox. Blocked messages are moved to a dedicated **`MailSweep-Blocked`** IMAP folder (not Trash) so you can review them before permanently deleting.
+
+**Adding senders to the blocklist:**
+- Right-click → **Unsubscribe && Block** — sends an unsubscribe request and adds the sender to your local blocklist
+- Right-click → **Unsubscribe, Block && Delete** — unsubscribes, adds to blocklist, and deletes selected messages
+- Right-click → **Delete All From Sender** — deletes all messages from that sender across the entire account (does not add to blocklist)
+- Open **Actions → Manage Blocklist** to add patterns manually
+
+**Post-scan detection:** During every scan, MailSweep checks only newly fetched messages against the blocklist (for performance — existing messages are never re-checked). Messages already in `MailSweep-Blocked` are skipped during the blocklist check since they are already in the right place. If blocked senders are found among new messages, you are prompted to move them. Enable **Auto-move** (in Settings or via the prompt checkbox) to move them silently without asking.
+
+**Blocklist Manager** (Actions → Manage Blocklist) has two tabs:
+
+| Tab | What it does |
+|-----|-------------|
+| **Local** | Add/remove/edit individual patterns; double-click a row to edit it; export to `.txt`; import from `.txt` |
+| **Community** | Enable/disable a community-sourced blocklist; enter any raw `.txt` URL (e.g. a GitHub raw link); Sync downloads and caches the list locally; you can also manually add, remove, or edit entries and save them |
+
+**Pattern format:**
+- `spam@example.com` — block a specific address
+- `@example.com` — block an entire domain
+
+**Community blocklist:** Point the URL to any publicly hosted `.txt` file (one pattern per line, `#` for comments). The list is stored locally at `~/.config/mailsweep/community_blocklist.txt` and is never merged into the local SQLite database — the two lists remain independent.
+
+---
+
 ### All Mail (Gmail) — Disable Option
 
 Gmail's All Mail folder is a virtual folder containing every message regardless of label.
@@ -323,8 +416,13 @@ treemaps, and duplicate searches since every message appears at least twice.
 | **Backup** | No | Download full message as .eml file |
 | **Backup & Delete** | Yes | Download .eml then move message to Trash |
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
-| **Unsubscribe** | No | Send unsubscribe request for selected mailing lists |
-| **Unsubscribe & Delete** | Yes | Unsubscribe then move messages to Trash |
+| **Permanent Delete** | Yes | Immediately expunge without moving to Trash |
+| **Unsubscribe && Block** | No | Send unsubscribe request and add sender to local blocklist |
+| **Unsubscribe, Block && Delete** | Yes | Unsubscribe, add sender to local blocklist, then move messages to Trash |
+| **Delete All From Sender** | Yes | Move all messages from that sender to Trash |
+| **Permanent Delete All From Sender** | Yes | Immediately expunge all messages from that sender without moving to Trash |
+| **Block && Permanent Delete All From Sender** | Yes | Add to blocklist and permanently expunge all messages from that sender |
+| **Empty Trash** | Yes | Permanently expunge all messages in the Trash folder |
 | **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
 ### Extract vs Detach
@@ -349,6 +447,7 @@ Both operations save attachments to your local disk, but they differ in what hap
 |------|------|
 | SQLite cache | `~/.local/share/mailsweep/mailsweep.db` |
 | Settings | `~/.config/mailsweep/settings.json` |
+| Community blocklist cache | `~/.config/mailsweep/community_blocklist.txt` |
 | Saved attachments | `~/MailSweep_Attachments/` |
 | Backup .eml files | `~/MailSweep_Attachments/backups/` |
 | App log | `~/.local/share/mailsweep/mailsweep.log` |

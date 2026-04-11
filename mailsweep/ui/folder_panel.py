@@ -104,7 +104,8 @@ class FolderPanel(QTreeWidget):
                     continue
 
                 is_leaf = depth == len(parts) - 1
-                item = QTreeWidgetItem([part, human_size(folder.total_size_bytes) if is_leaf else ""])
+                label = f"{part} ({folder.message_count:,})" if is_leaf and folder.message_count else part
+                item = QTreeWidgetItem([label, human_size(folder.total_size_bytes) if is_leaf else ""])
                 item.setData(0, FOLDER_ID_ROLE, folder.id if is_leaf else None)
 
                 if is_leaf:
@@ -132,10 +133,10 @@ class FolderPanel(QTreeWidget):
             self.folder_selected.emit([fid])
         # Intermediate nodes (None) do nothing
 
-    def update_folder_size(self, folder_id: int, size_bytes: int) -> None:
-        """Update the size badge for a single folder."""
+    def update_folder_size(self, folder_id: int, size_bytes: int, message_count: int = 0) -> None:
+        """Update the size badge and message count for a single folder."""
         root = self.invisibleRootItem()
-        self._update_item_size(root, folder_id, size_bytes)
+        self._update_item_size(root, folder_id, size_bytes, message_count)
 
     def select_folder(self, folder_id: int) -> None:
         """Programmatically select a folder by ID in the tree."""
@@ -157,15 +158,19 @@ class FolderPanel(QTreeWidget):
         return None
 
     def _update_item_size(
-        self, parent: QTreeWidgetItem, folder_id: int, size_bytes: int
+        self, parent: QTreeWidgetItem, folder_id: int, size_bytes: int, message_count: int = 0
     ) -> bool:
         for i in range(parent.childCount()):
             child = parent.child(i)
             if child is None:
                 continue
             if child.data(0, FOLDER_ID_ROLE) == folder_id:
+                # Update size column
                 child.setText(1, human_size(size_bytes))
+                # Update name with count
+                base_name = child.text(0).split(" (")[0]
+                child.setText(0, f"{base_name} ({message_count:,})" if message_count else base_name)
                 return True
-            if self._update_item_size(child, folder_id, size_bytes):
+            if self._update_item_size(child, folder_id, size_bytes, message_count):
                 return True
         return False

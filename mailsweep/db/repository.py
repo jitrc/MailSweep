@@ -321,13 +321,15 @@ class MessageRepository:
         return [Message.from_row(dict(r)) for r in rows]
 
     def get_sender_summary(
-        self, folder_ids: list[int] | None = None
+        self,
+        folder_ids: list[int] | None = None,
+        exclude_folder_ids: list[int] | None = None,
     ) -> list[dict[str, Any]]:
         """Return per-sender aggregation grouped by email address.
 
         from_addr may be 'Name <email>' or just 'email'. We extract the
         email portion so 'Alice <a@b.com>' and 'A <a@b.com>' merge into
-        one group. The display name shown is the most common variant.
+        one group. The most common from_addr variant is used as the display name.
         """
         clauses: list[str] = []
         params: list[Any] = []
@@ -335,8 +337,12 @@ class MessageRepository:
             placeholders = ",".join("?" * len(folder_ids))
             clauses.append(f"folder_id IN ({placeholders})")
             params.extend(folder_ids)
+        if exclude_folder_ids:
+            placeholders = ",".join("?" * len(exclude_folder_ids))
+            clauses.append(f"folder_id NOT IN ({placeholders})")
+            params.extend(exclude_folder_ids)
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
-        # Extract email: take substring between < and >, else use full from_addr
+        # Extract email; pick the most common from_addr as the display name
         sql = f"""
             SELECT
                 CASE WHEN INSTR(from_addr, '<') > 0
@@ -345,14 +351,14 @@ class MessageRepository:
                                        INSTR(from_addr, '>') - INSTR(from_addr, '<') - 1))
                      ELSE LOWER(from_addr)
                 END AS sender_email,
-                from_addr,
+                MAX(from_addr)  AS from_addr,
                 COUNT(*)        AS message_count,
                 SUM(size_bytes) AS total_size_bytes
             FROM messages
             {where}
             GROUP BY sender_email
-            ORDER BY total_size_bytes DESC
-            LIMIT 1000
+            ORDER BY message_count DESC
+            LIMIT 2000
         """
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
@@ -981,3 +987,55 @@ class MessageRepository:
                 ),
             ).fetchall()
         return [Message.from_row(dict(r)) for r in rows]
+
+
+class BlocklistRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def add(self, pattern: str) -> None:
+        pattern = pattern.strip().lower()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO blocked_senders (pattern, source) VALUES (?, 'local')",
+            (pattern,),
+        )
+        self._conn.commit()
+
+    def remove(self, pattern: str) -> None:
+        self._conn.execute("DELETE FROM blocked_senders WHERE pattern = ?", (pattern.lower(),))
+        self._conn.commit()
+
+    def get_all(self) -> list[dict]:
+        cur = self._conn.execute(
+            "SELECT pattern, added_at FROM blocked_senders WHERE source = 'local' ORDER BY pattern"
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_local_patterns(self) -> set[str]:
+        cur = self._conn.execute("SELECT pattern FROM blocked_senders WHERE source = 'local'")
+        return {r[0] for r in cur.fetchall()}
+
+    def is_blocked(self, from_addr: str, community_patterns: set[str] | None = None) -> bool:
+        """Check if from_addr matches local DB or (optionally) a set of community patterns."""
+        if not from_addr:
+            return False
+        import re
+        addr = from_addr.lower()
+        match = re.search(r"<([^>]+)>", addr)
+        email = match.group(1) if match else addr
+        domain = "@" + email.split("@")[-1] if "@" in email else ""
+
+        # Check local DB
+        cur = self._conn.execute(
+            "SELECT 1 FROM blocked_senders WHERE source = 'local' AND (pattern = ? OR (? != '' AND pattern = ?)) LIMIT 1",
+            (email, domain, domain),
+        )
+        if cur.fetchone() is not None:
+            return True
+
+        # Check community patterns (separate file, not in DB)
+        if community_patterns:
+            if email in community_patterns or (domain and domain in community_patterns):
+                return True
+
+        return False
